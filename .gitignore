@@ -1,0 +1,36 @@
+# Binaries
+build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+raw/
+claude-docs/
+
+# Test files
+*.x3f
+*.dng
+*.tiff
+*.tif
+*.jpg
+*.jpeg
+*.png
+*.heif
+*.heic
+
+# Go
+*.test
+*.out
+go.sum
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
