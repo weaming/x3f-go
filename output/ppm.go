@@ -120,3 +120,82 @@ func ExportRawPPM(imageSection *x3f.ImageSection, file *x3f.File, outputPath str
 
 	return nil
 }
+
+// ExportPreprocessedPPM 导出预处理后但未进行色彩转换的数据为 PPM
+// 用于对比 C 版本的默认 PPM 输出（也是预处理后的中间数据）
+func ExportPreprocessedPPM(imageSection *x3f.ImageSection, file *x3f.File, outputPath string, noCrop bool, wb string) error {
+	// 解码图像（如果还没解码）
+	if imageSection.DecodedData == nil {
+		if err := imageSection.DecodeImage(); err != nil {
+			return fmt.Errorf("解码失败: %w", err)
+		}
+	}
+
+	// 应用预处理
+	if err := processor.PreprocessData(file, imageSection, wb); err != nil {
+		return fmt.Errorf("预处理失败: %w", err)
+	}
+
+	// 确定输出尺寸
+	decodedWidth := imageSection.Columns
+	decodedHeight := imageSection.Rows
+	if imageSection.DecodedColumns > 0 {
+		decodedWidth = imageSection.DecodedColumns
+	}
+	if imageSection.DecodedRows > 0 {
+		decodedHeight = imageSection.DecodedRows
+	}
+
+	var targetWidth, targetHeight uint32
+	var cropX, cropY int32
+
+	if noCrop {
+		targetWidth = decodedWidth
+		targetHeight = decodedHeight
+		cropX = 0
+		cropY = 0
+	} else {
+		x0, y0, x1, y1, ok := file.GetActiveImageArea()
+		if ok {
+			cropX = int32(x0)
+			cropY = int32(y0)
+			targetWidth = x1 - x0 + 1
+			targetHeight = y1 - y0 + 1
+		} else {
+			targetWidth = file.Header.Columns
+			targetHeight = file.Header.Rows
+			if targetWidth == 0 || targetHeight == 0 {
+				targetWidth = decodedWidth
+				targetHeight = decodedHeight
+			}
+			cropX = int32((decodedWidth - targetWidth) / 2)
+			cropY = int32((decodedHeight - targetHeight) / 2)
+		}
+	}
+
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// 写入 PPM 头部
+	fmt.Fprintf(f, "P3\n%d %d\n65535\n", targetWidth, targetHeight)
+
+	// 写入预处理后的像素数据
+	for outY := uint32(0); outY < targetHeight; outY++ {
+		for outX := uint32(0); outX < targetWidth; outX++ {
+			srcX := int32(outX) + cropX
+			srcY := int32(outY) + cropY
+			srcIdx := int(srcY)*int(decodedWidth) + int(srcX)
+
+			r := imageSection.DecodedData[srcIdx*3]
+			g := imageSection.DecodedData[srcIdx*3+1]
+			b := imageSection.DecodedData[srcIdx*3+2]
+
+			fmt.Fprintf(f, "%d %d %d \n", r, g, b)
+		}
+	}
+
+	return nil
+}

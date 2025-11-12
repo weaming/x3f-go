@@ -30,35 +30,74 @@ func CalculateBlackLevel(file *x3f.File, section *x3f.ImageSection) (BlackLevelI
 		decodedHeight = section.DecodedRows
 	}
 
-	// 尝试从 CAMF 获取 DarkShieldTop 区域
+	// 使用所有可用区域计算黑电平（和 C 版本一致）
 	var areas []struct {
 		x0, y0, x1, y1 uint32
 		name           string
 	}
 
-	if x0, y0, x1, y1, ok := file.GetCAMFRect("DarkShieldTop"); ok {
+	// 1. 尝试 DarkShieldTop
+	if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldTop", decodedWidth, decodedHeight, true); ok {
+		debug("Calculate black level for DarkShieldTop: [%d,%d,%d,%d]", x0, y0, x1, y1)
 		areas = append(areas, struct {
 			x0, y0, x1, y1 uint32
 			name           string
 		}{x0, y0, x1, y1, "DarkShieldTop"})
+	} else {
+		debug("Do not calculate black level for DarkShieldTop")
 	}
 
-	// 对于某些相机，DarkShieldBottom 有问题，暂时不使用
-
-	// 如果没有 DarkShield 区域，使用左右边缘列
-	if len(areas) == 0 {
-		// 使用左边 64 列和右边 64 列作为黑电平区域
-		const edgeWidth = 64
-		if decodedWidth > edgeWidth*2 {
+	// 2. DarkShieldBottom - 某些相机有问题，需要检查相机型号
+	useDarkShieldBottom := true
+	if model, ok := file.GetProperty("CAMMODEL"); ok && model == "SIGMA DP2" {
+		useDarkShieldBottom = false
+		debug("Skip DarkShieldBottom for SIGMA DP2")
+	}
+	if cameraID, ok := file.GetCAMFUint32("CAMERAID"); ok && cameraID == 0x10 { // X3F_CAMERAID_SDQH
+		useDarkShieldBottom = false
+		debug("Skip DarkShieldBottom for sd Quattro H")
+	}
+	if useDarkShieldBottom {
+		if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldBottom", decodedWidth, decodedHeight, true); ok {
+			debug("Calculate black level for DarkShieldBottom: [%d,%d,%d,%d]", x0, y0, x1, y1)
 			areas = append(areas, struct {
 				x0, y0, x1, y1 uint32
 				name           string
-			}{0, 0, edgeWidth - 1, decodedHeight - 1, "LeftEdge"})
+			}{x0, y0, x1, y1, "DarkShieldBottom"})
+		} else {
+			debug("Do not calculate black level for DarkShieldBottom (not found)")
+		}
+	}
 
+	// 3. 左右边缘列
+	// 尝试从 CAMF 获取 DarkShieldColRange
+	if colRange, ok := file.GetCAMFMatrixUint32("DarkShieldColRange", 2, 2); ok {
+		leftX0 := uint32(colRange[0])
+		leftX1 := uint32(colRange[1])
+		rightX0 := uint32(colRange[2])
+		rightX1 := uint32(colRange[3])
+
+		// 获取 KeepImageArea 进行缩放
+		if keepX0, _, keepX1, _, keepOk := file.GetCAMFRect("KeepImageArea"); keepOk {
+			keepCols := keepX1 - keepX0 + 1
+
+			// 缩放到实际图像尺寸
+			leftX0 = leftX0 * decodedWidth / keepCols
+			leftX1 = leftX1 * decodedWidth / keepCols
+			rightX0 = rightX0 * decodedWidth / keepCols
+			rightX1 = rightX1 * decodedWidth / keepCols
+
+			debug("Calculate black level for Left: [%d,0,%d,%d]", leftX0, leftX1, decodedHeight-1)
 			areas = append(areas, struct {
 				x0, y0, x1, y1 uint32
 				name           string
-			}{decodedWidth - edgeWidth, 0, decodedWidth - 1, decodedHeight - 1, "RightEdge"})
+			}{leftX0, 0, leftX1, decodedHeight - 1, "Left"})
+
+			debug("Calculate black level for Right: [%d,0,%d,%d]", rightX0, rightX1, decodedHeight-1)
+			areas = append(areas, struct {
+				x0, y0, x1, y1 uint32
+				name           string
+			}{rightX0, 0, rightX1, decodedHeight - 1, "Right"})
 		}
 	}
 
@@ -211,8 +250,13 @@ func PreprocessData(file *x3f.File, section *x3f.ImageSection, wb string) error 
 		scale[i] = (white - black) / (float64(maxRaw[i]) - blackLevelInfo.Level[i])
 	}
 
-	debug("PreprocessData: scale=(%.6f, %.6f, %.6f), intermediateBias=%.2f",
-		scale[0], scale[1], scale[2], intermediateBias)
+	debug("[PREPROC] maxRaw=(%d, %d, %d), blackLevel=(%.2f, %.2f, %.2f)",
+		maxRaw[0], maxRaw[1], maxRaw[2],
+		blackLevelInfo.Level[0], blackLevelInfo.Level[1], blackLevelInfo.Level[2])
+	debug("[PREPROC] maxIntermediate=(%d, %d, %d), intermediateBias=%.2f",
+		maxIntermediate[0], maxIntermediate[1], maxIntermediate[2], intermediateBias)
+	debug("[PREPROC] scale=(%.6f, %.6f, %.6f)",
+		scale[0], scale[1], scale[2])
 
 	// 应用预处理到每个像素
 	decodedWidth := section.Columns
@@ -224,9 +268,11 @@ func PreprocessData(file *x3f.File, section *x3f.ImageSection, wb string) error 
 		decodedHeight = section.DecodedRows
 	}
 
+	// 应用预处理到每个像素
 	for y := uint32(0); y < decodedHeight; y++ {
 		for x := uint32(0); x < decodedWidth; x++ {
 			idx := int(y)*int(decodedWidth) + int(x)
+
 			for c := 0; c < 3; c++ {
 				val := float64(section.DecodedData[idx*3+c])
 				out := math.Round(scale[c]*(val-blackLevelInfo.Level[c]) + intermediateBias)
@@ -241,6 +287,25 @@ func PreprocessData(file *x3f.File, section *x3f.ImageSection, wb string) error 
 			}
 		}
 	}
+
+	// 坏点修复（在预处理之后）
+	badPixels := CollectBadPixels(file, decodedWidth, decodedHeight, 3)
+	InterpolateBadPixels(section.DecodedData, decodedWidth, decodedHeight, 3, badPixels)
+
+	// V median filtering（在 YUV 色彩空间，只对 ActiveImageArea）
+	x0, y0, x1, y1, ok := file.GetCAMFRectScaled("ActiveImageArea", decodedWidth, decodedHeight, true)
+	if !ok {
+		// 如果没有 ActiveImageArea，使用整个图像
+		x0, y0 = 0, 0
+		x1, y1 = decodedWidth-1, decodedHeight-1
+		debug("Could not get active area, denoising entire image")
+	}
+
+	debug("V median filtering on active area [%d,%d,%d,%d]", x0, y0, x1, y1)
+	// 注意: 必须对整个图像做色彩空间转换,因为中值滤波需要访问边界外的像素
+	BMT_to_YUV_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
+	VMedianFilterArea(section.DecodedData, decodedWidth, decodedHeight, 3, x0, y0, x1, y1)
+	YUV_to_BMT_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
 
 	return nil
 }

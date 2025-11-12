@@ -23,6 +23,7 @@ type Config struct {
 	NoCrop          bool
 	CompatibleWithC bool
 	DumpMeta        bool
+	Unprocessed     bool
 }
 
 func main() {
@@ -70,6 +71,8 @@ func parseFlags() *Config {
 		"C 兼容模式：生成与 C 版本完全相同的输出（完整图像+Active Area）")
 	flag.BoolVar(&config.DumpMeta, "meta", false,
 		"输出元数据到 <输入文件>.meta")
+	flag.BoolVar(&config.Unprocessed, "unprocessed", false,
+		"输出未处理的原始 RAW 数据（默认输出预处理后的数据）")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "用法: x3f-go [选项] <输入.x3f>\n\n")
@@ -281,11 +284,31 @@ func convertToDNG(x3fFile *x3f.File, config *Config) error {
 		wb = x3fFile.GetWhiteBalance()
 	}
 
-	// 应用预处理 (黑电平校正、intermediate bias、scale 转换)
-	if err := processor.PreprocessData(x3fFile, rawSection, wb); err != nil {
-		if config.Verbose {
-			fmt.Printf("警告: 预处理失败: %v\n", err)
+	// 在预处理之前,计算 intermediate 数据的电平信息(用于 linear sRGB 转换)
+	var intermediateBias float64
+	var maxIntermediate [3]uint32
+	hasIntermediateData := false
+
+	if !config.CompatibleWithC {
+		blackLevel, err := processor.CalculateBlackLevel(x3fFile, rawSection)
+		if err == nil {
+			if bias, ok := processor.GetIntermediateBias(x3fFile, wb, blackLevel); ok {
+				intermediateBias = bias
+				if maxInt, ok2 := processor.GetMaxIntermediate(x3fFile, wb, intermediateBias); ok2 {
+					maxIntermediate = maxInt
+					hasIntermediateData = true
+				}
+			}
 		}
+		if !hasIntermediateData && config.Verbose {
+			fmt.Printf("警告: 无法计算 intermediate levels\n")
+		}
+	}
+
+	// 应用预处理 (黑电平校正、intermediate bias、scale 转换)
+	// 将 12-bit RAW 转换为 14-bit intermediate 数据
+	if err := processor.PreprocessData(x3fFile, rawSection, wb); err != nil && config.Verbose {
+		fmt.Printf("警告: 预处理失败: %v\n", err)
 	}
 
 	// 获取相机信息
@@ -299,28 +322,35 @@ func convertToDNG(x3fFile *x3f.File, config *Config) error {
 		cameraSerial = serial
 	}
 
-	// 获取色彩矩阵和白平衡增益
+	// 获取色彩矩阵
 	colorMatrix, _ := x3fFile.GetColorMatrix(wb)
-	whiteBalance, ok := x3fFile.GetWhiteBalanceGain(wb)
 
-	// 如果无法获取白平衡，使用默认值
-	if !ok || (whiteBalance[0] == 0 && whiteBalance[1] == 0 && whiteBalance[2] == 0) {
-		whiteBalance = x3f.DefaultWhiteBalanceGain
-		if config.Verbose {
-			fmt.Printf("使用默认白平衡增益: [%.5f, %.5f, %.5f]\n",
-				whiteBalance[0], whiteBalance[1], whiteBalance[2])
+	// 获取白平衡增益 (仅在 C 兼容模式下使用)
+	var whiteBalance [3]float64
+	if config.CompatibleWithC {
+		var ok bool
+		whiteBalance, ok = x3fFile.GetWhiteBalanceGain(wb)
+		if !ok || (whiteBalance[0] == 0 && whiteBalance[1] == 0 && whiteBalance[2] == 0) {
+			whiteBalance = x3f.DefaultWhiteBalanceGain
+			if config.Verbose {
+				fmt.Printf("使用默认白平衡增益: [%.5f, %.5f, %.5f]\n",
+					whiteBalance[0], whiteBalance[1], whiteBalance[2])
+			}
 		}
 	}
 
 	dngOpts := output.DNGOptions{
-		CameraModel:     cameraModel,
-		CameraSerial:    cameraSerial,
-		ColorMatrix:     colorMatrix,
-		WhiteBalance:    whiteBalance,
-		BaselineExpose:  1.0,
-		LinearOutput:    true,
-		NoCrop:          config.NoCrop,
-		CompatibleWithC: config.CompatibleWithC,
+		CameraModel:         cameraModel,
+		CameraSerial:        cameraSerial,
+		ColorMatrix:         colorMatrix,
+		WhiteBalance:        whiteBalance,
+		BaselineExpose:      1.0,
+		LinearOutput:        true,
+		NoCrop:              config.NoCrop,
+		CompatibleWithC:     config.CompatibleWithC,
+		IntermediateBias:    intermediateBias,
+		MaxIntermediate:     maxIntermediate,
+		HasIntermediateData: hasIntermediateData,
 	}
 
 	if config.Verbose {
@@ -426,8 +456,14 @@ func convertToHEIF(x3fFile *x3f.File, config *Config) error {
 }
 
 func convertToPPM(x3fFile *x3f.File, config *Config) error {
-	if config.Verbose {
-		fmt.Println("转换为 PPM（调试格式 - 未处理的 RAW 数据）...")
+	if config.Unprocessed {
+		if config.Verbose {
+			fmt.Println("转换为 PPM（未处理的 RAW 数据）...")
+		}
+	} else {
+		if config.Verbose {
+			fmt.Println("转换为 PPM（预处理后的数据）...")
+		}
 	}
 
 	// 先加载图像段
@@ -450,13 +486,13 @@ func convertToPPM(x3fFile *x3f.File, config *Config) error {
 		}
 	}
 
-	// 获取 RAW 图像段（TRUE format=0x1e, Quattro format=0x23）
+	// 获取 RAW 图像段
 	var rawSection *x3f.ImageSection
 	for _, sec := range x3fFile.ImageData {
 		if config.Verbose {
 			fmt.Printf("检查图像段: Format=0x%08x\n", sec.Format)
 		}
-		if sec.Format == 0x0000001e || sec.Format == 0x00000023 {
+		if sec.Format == 0x0000001e || sec.Format == 0x00000023 || sec.Format == 0x00000012 {
 			rawSection = sec
 			break
 		}
@@ -470,6 +506,15 @@ func convertToPPM(x3fFile *x3f.File, config *Config) error {
 		fmt.Printf("写入 PPM 文件: %s\n", config.Output)
 	}
 
-	// 直接导出 RAW 数据，不经过任何处理
-	return output.ExportRawPPM(rawSection, x3fFile, config.Output, config.NoCrop)
+	if config.Unprocessed {
+		// 导出未处理的 RAW 数据
+		return output.ExportRawPPM(rawSection, x3fFile, config.Output, config.NoCrop)
+	} else {
+		// 导出预处理后的数据
+		wb := config.WhiteBalance
+		if wb == "" {
+			wb = x3fFile.GetWhiteBalance()
+		}
+		return output.ExportPreprocessedPPM(rawSection, x3fFile, config.Output, config.NoCrop, wb)
+	}
 }

@@ -280,15 +280,6 @@ func TRUEDecodeOneColor(data []byte, rows, columns int, tree *HuffmanTree, seed 
 			// 计算当前值
 			value := prev + diff
 
-			// 调试：输出前几个像素和裁剪区域的解码过程
-			if row == 0 && col < 5 {
-				debug("  [%d,%d] seed=%d, diff=%d, prev=%d, value=%d", row, col, seed, diff, prev, value)
-			}
-			// 也输出裁剪区域的第一个像素
-			if row == 64 && col == 112 {
-				debug("  [crop %d,%d] seed=%d, diff=%d, prev=%d, value=%d", row, col, seed, diff, prev, value)
-			}
-
 			// 更新累加器
 			colAcc[colMod] = value
 			if col < 2 {
@@ -516,7 +507,7 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 	}
 	// 跳过 unknown (uint16)
 	offset += 2
-	debug("  TRUE seeds: [%d, %d, %d], offset=%d",
+	debug("TRUE seeds: [%d, %d, %d], offset=%d",
 		section.TRUESeeds[0], section.TRUESeeds[1], section.TRUESeeds[2], offset)
 
 	// 读取 TRUE Huffman 表（变长，直到 CodeSize == 0）
@@ -674,8 +665,6 @@ func (section *ImageSection) decodeTRUEImage() error {
 		planeSize := int(section.TRUEPlaneSizes[color])
 		planeData := section.Data[dataOffset : dataOffset+planeSize]
 
-		debug("  Decoding color %d: plane size=%d, offset=%d", color, planeSize, dataOffset)
-
 		var planeRows, planeCols int
 		if isQuattroLayout && color == 2 {
 			// Quattro top layer: 使用 plane[2] 的全分辨率尺寸
@@ -690,9 +679,6 @@ func (section *ImageSection) decodeTRUEImage() error {
 			planeRows = mainRows
 			planeCols = mainCols
 		}
-
-		debug("  Decoding color %d: plane size=%d, dimensions=%dx%d",
-			color, planeSize, planeCols, planeRows)
 
 		colorData := TRUEDecodeOneColor(
 			planeData,

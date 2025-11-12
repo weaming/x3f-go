@@ -1,7 +1,6 @@
 package output
 
 import (
-	"fmt"
 	"io"
 	"os"
 
@@ -38,10 +37,9 @@ type stripInfo struct {
 func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	targetWidth, targetHeight uint32,
 	activeAreaTop, activeAreaLeft, activeAreaBottom, activeAreaRight uint32,
-	wbGain [3]float64, opcodeList2Data []byte) (uint32, error) {
+	levels x3f.ImageLevels, opcodeList2Data []byte) (uint32, error) {
 
 	subIFDOffset := recordSubIFDOffset(file)
-	levels := getImageLevelsForWbGain(x3fFile, wbGain)
 	strips := calculateStripInfo(targetWidth, targetHeight)
 
 	subIFD := createSubIFD(file)
@@ -63,15 +61,6 @@ func recordSubIFDOffset(file *os.File) uint32 {
 		panic(err)
 	}
 	return uint32(offset)
-}
-
-// 获取图像黑白电平
-func getImageLevelsForWbGain(x3fFile *x3f.File, wbGain [3]float64) x3f.ImageLevels {
-	levels, ok := x3fFile.GetImageLevelsWithGain(wbGain)
-	if !ok {
-		panic(fmt.Errorf("无法获取图像电平"))
-	}
-	return levels
 }
 
 // calculateStripInfo 计算条带信息

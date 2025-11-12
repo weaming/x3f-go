@@ -772,6 +772,27 @@ func (f *File) GetCAMFMatrix(name string) (interface{}, []uint32, bool) {
 	return nil, nil, false
 }
 
+// GetCAMFMatrixUint32 获取指定维度的 uint32 矩阵
+func (f *File) GetCAMFMatrixUint32(name string, expectedRows, expectedCols uint32) ([]uint32, bool) {
+	data, dims, ok := f.GetCAMFMatrix(name)
+	if !ok {
+		return nil, false
+	}
+
+	// 检查维度
+	if len(dims) != 2 || dims[0] != expectedRows || dims[1] != expectedCols {
+		return nil, false
+	}
+
+	// 转换为 uint32 数组
+	switch v := data.(type) {
+	case []uint32:
+		return v, true
+	default:
+		return nil, false
+	}
+}
+
 // GetWhiteBalance 获取白平衡预设名称
 func (f *File) GetWhiteBalance() string {
 	if wb, ok := f.GetCAMFUint32("WhiteBalance"); ok {
@@ -836,13 +857,12 @@ func (f *File) IsTRUEEngine() bool {
 
 // GetMaxRAW 获取最大 RAW 值
 func (f *File) GetMaxRAW() ([3]uint32, bool) {
-	// TODO: ImageDepth 解析有问题,暂时跳过
-	// 尝试从 ImageDepth 获取
-	// if imageDepth, ok := f.GetCAMFUint32("ImageDepth"); ok {
-	// 	maxVal := (uint32(1) << imageDepth) - 1
-	// 	debug("GetMaxRAW: from ImageDepth=%d, maxVal=%d", imageDepth, maxVal)
-	// 	return [3]uint32{maxVal, maxVal, maxVal}, true
-	// }
+	// 优先尝试从 ImageDepth 获取
+	if imageDepth, ok := f.GetCAMFUint32("ImageDepth"); ok {
+		maxVal := (uint32(1) << imageDepth) - 1
+		debug("GetMaxRAW: from ImageDepth=%d, maxVal=%d", imageDepth, maxVal)
+		return [3]uint32{maxVal, maxVal, maxVal}, true
+	}
 
 	// 根据是否为 TRUE 引擎选择不同的字段
 	var fieldName string
@@ -1455,6 +1475,60 @@ func (f *File) GetCAMFRect(name string) (x0, y0, x1, y1 uint32, ok bool) {
 	}
 
 	return 0, 0, 0, 0, false
+}
+
+// GetCAMFRectScaled 获取 CAMF 矩形区域，并根据图像实际尺寸进行缩放
+// rescale=true 时，坐标会从 KeepImageArea 的分辨率缩放到 imageWidth x imageHeight
+func (f *File) GetCAMFRectScaled(name string, imageWidth, imageHeight uint32, rescale bool) (x0, y0, x1, y1 uint32, ok bool) {
+	// 获取原始 rect
+	x0, y0, x1, y1, ok = f.GetCAMFRect(name)
+	if !ok {
+		return 0, 0, 0, 0, false
+	}
+
+	// 获取 KeepImageArea
+	keepX0, keepY0, keepX1, keepY1, keepOk := f.GetCAMFRect("KeepImageArea")
+	if !keepOk {
+		return 0, 0, 0, 0, false
+	}
+
+	keepCols := keepX1 - keepX0 + 1
+	keepRows := keepY1 - keepY0 + 1
+
+	// 检查 rect 是否在 KeepImageArea 范围内
+	if x0 > keepX1 || y0 > keepY1 || x1 < keepX0 || y1 < keepY0 {
+		return 0, 0, 0, 0, false
+	}
+
+	// 调整 rect 到 KeepImageArea 的相对坐标
+	if x0 < keepX0 {
+		x0 = keepX0
+	}
+	if y0 < keepY0 {
+		y0 = keepY0
+	}
+	if x1 > keepX1 {
+		x1 = keepX1
+	}
+	if y1 > keepY1 {
+		y1 = keepY1
+	}
+
+	// 转换为相对于 KeepImageArea 的坐标
+	x0 -= keepX0
+	y0 -= keepY0
+	x1 -= keepX0
+	y1 -= keepY0
+
+	// 如果需要缩放，根据实际图像尺寸和 KeepImageArea 的比例进行缩放
+	if rescale {
+		x0 = x0 * imageWidth / keepCols
+		y0 = y0 * imageHeight / keepRows
+		x1 = x1 * imageWidth / keepCols
+		y1 = y1 * imageHeight / keepRows
+	}
+
+	return x0, y0, x1, y1, true
 }
 
 // SpatialGainCorr Spatial Gain 校正数据
