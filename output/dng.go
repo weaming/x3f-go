@@ -154,8 +154,11 @@ func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) 
 		count := uint32(len(values))
 		offset := extraDataOffset
 
+		// 使用与 IFDWriter 相同的最大分母，确保精度一致
+		const maxDenom = 67108864 // 2^26
+
 		for _, v := range values {
-			num, denom := floatToRational(v, 1000000000)
+			num, denom := floatToRational(v, maxDenom)
 			if signed {
 				binary.Write(extraData, binary.BigEndian, int32(num))
 				binary.Write(extraData, binary.BigEndian, int32(denom))
@@ -616,8 +619,19 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 	dngBackwardVersionValue := uint32(1) | (uint32(3) << 8)
 	ifd0.AddByte(TagDNGBackwardVersion, dngBackwardVersionValue)
 
-	// ColorMatrix1 (9个有理数) - XYZ to sRGB (固定标准矩阵)
-	colorMatrix1 := x3f.GetColorMatrix1ForDNG()
+	// ColorMatrix1 (9个有理数) - inverse(bmt_to_xyz)
+	// C 代码: x3f_3x3_inverse(bmt_to_xyz, xyz_to_bmt)
+	// 注意: IFD0 使用相机特定的矩阵，ProfileIFD 使用固定的 XYZ_to_sRGB
+	bmtToXYZSlice, ok := x3fFile.GetBMTToXYZ(wb)
+	if !ok {
+		return fmt.Errorf("无法获取 BMT to XYZ 矩阵")
+	}
+	// 转换为 Matrix3x3
+	var bmtToXYZ matrix.Matrix3x3
+	copy(bmtToXYZ[:], bmtToXYZSlice)
+	// 求逆得到 ColorMatrix1
+	xyzToBMT := matrix.Inverse3x3(bmtToXYZ)
+	colorMatrix1 := xyzToBMT[:]
 	ifd0.AddRationalArrayFromFloats(TagColorMatrix1, colorMatrix1, true)
 
 	// CameraCalibration1 (9个有理数) - 使用 D65 (Overcast) 白平衡

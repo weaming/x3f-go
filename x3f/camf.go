@@ -1345,8 +1345,8 @@ func (f *File) camfDecodeType5Data(huffmanData []byte, tree *HuffmanTree, decode
 // 注意: 在 Sigma X3F 实现中，ColorMatrix1 是固定的 XYZ_to_sRGB 标准矩阵
 // 不依赖于相机或白平衡设置
 func GetColorMatrix1ForDNG() []float64 {
-	// XYZ_to_sRGB (D65) 标准矩阵
-	// 这是 sRGB_to_XYZ 的逆矩阵
+	// XYZ_to_sRGB (D65) 标准矩阵（高精度）
+	// 使用 sRGB 标准的完整精度值
 	return []float64{
 		3.2404542, -1.5371385, -0.4985314,
 		-0.9692660, 1.8760108, 0.0415560,
@@ -1392,23 +1392,15 @@ func (f *File) GetForwardMatrix1ForDNG(wb string) ([]float64, bool) {
 
 // GetBMTToXYZ 获取 BMT 到 XYZ 的转换矩阵
 func (f *File) GetBMTToXYZ(wb string) ([]float64, bool) {
+	// sRGB -> XYZ 标准矩阵
+	sRGBToXYZ := GetSRGBToXYZMatrix()
+
 	// 尝试从 WhiteBalanceColorCorrections 获取
 	if ccMatrix, ok := f.GetCAMFMatrixForWB("WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
-		// sRGB -> XYZ 矩阵
-		sRGBToXYZ := []float64{
-			0.4124564, 0.3575761, 0.1804375,
-			0.2126729, 0.7151522, 0.0721750,
-			0.0193339, 0.1191920, 0.9503041,
-		}
 		return multiply3x3(sRGBToXYZ, ccMatrix), true
 	}
 
 	if ccMatrix, ok := f.GetCAMFMatrixForWB("DP1_WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
-		sRGBToXYZ := []float64{
-			0.4124564, 0.3575761, 0.1804375,
-			0.2126729, 0.7151522, 0.0721750,
-			0.0193339, 0.1191920, 0.9503041,
-		}
 		return multiply3x3(sRGBToXYZ, ccMatrix), true
 	}
 
@@ -1880,12 +1872,39 @@ func convertSpatialGain(data []float64, dims []uint32) *SpatialGainCorr {
 }
 
 // GetSRGBToXYZMatrix 获取 sRGB 到 XYZ 的标准矩阵
+// 使用 sRGB 标准的完整精度值
 func GetSRGBToXYZMatrix() []float64 {
 	return []float64{
 		0.4124564, 0.3575761, 0.1804375,
 		0.2126729, 0.7151522, 0.0721750,
 		0.0193339, 0.1191920, 0.9503041,
 	}
+}
+
+// GetRawToXYZ 获取 raw_to_xyz 矩阵 (包含白平衡增益)
+// C 代码: x3f_get_raw_to_xyz = bmt_to_xyz × diag(gain)
+func (f *File) GetRawToXYZ(wb string) ([]float64, bool) {
+	// 获取 bmt_to_xyz
+	bmtToXYZ, ok := f.GetBMTToXYZ(wb)
+	if !ok {
+		return nil, false
+	}
+
+	// 获取白平衡增益
+	gain, ok := f.GetWhiteBalanceGain(wb)
+	if !ok {
+		return nil, false
+	}
+
+	// 构造增益对角矩阵
+	gainMat := []float64{
+		gain[0], 0, 0,
+		0, gain[1], 0,
+		0, 0, gain[2],
+	}
+
+	// raw_to_xyz = bmt_to_xyz × gain_mat
+	return multiply3x3(bmtToXYZ, gainMat), true
 }
 
 // GetForwardMatrixWithSRGB 获取基于 sRGB 标准矩阵的 ForwardMatrix1

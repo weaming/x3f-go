@@ -2,7 +2,6 @@ package output
 
 import (
 	"encoding/binary"
-	"math"
 
 	"github.com/weaming/x3f-go/colorspace"
 	"github.com/weaming/x3f-go/x3f"
@@ -15,44 +14,18 @@ import (
 // x3fFile: X3F 文件对象（用于获取色彩矩阵）
 // wb: 白平衡名称
 func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint32, x3fFile *x3f.File, wb string) ([]byte, uint32, uint32) {
-	// 计算缩放比例
-	scale := float64(maxWidth) / float64(width)
-	previewWidth := maxWidth
-	previewHeight := uint32(math.Round(float64(height) * scale))
+	// C 代码缩放算法: reduction = (width + maxWidth - 1) / maxWidth
+	reduction := (width + maxWidth - 1) / maxWidth
+	reduction2 := reduction * reduction
 
-	if scale >= 1.0 {
+	previewWidth := width / reduction
+	previewHeight := height / reduction
+
+	if reduction < 1 {
+		reduction = 1
+		reduction2 = 1
 		previewWidth = width
 		previewHeight = height
-		scale = 1.0
-	}
-
-	// 创建 16-bit 预览图缓冲区（用于色彩转换）
-	preview16Data := make([]uint16, previewWidth*previewHeight*3)
-
-	// 简单的最近邻插值缩放（16-bit）
-	for py := uint32(0); py < previewHeight; py++ {
-		for px := uint32(0); px < previewWidth; px++ {
-			// 映射到原始图像坐标
-			sx := uint32(float64(px) / scale)
-			sy := uint32(float64(py) / scale)
-
-			// 确保不越界
-			if sx >= width {
-				sx = width - 1
-			}
-			if sy >= height {
-				sy = height - 1
-			}
-
-			// 读取原始 16-bit Linear Raw 像素
-			srcIdx := (sy*width + sx) * 6 // 16-bit = 2 bytes per channel
-			dstIdx := (py*previewWidth + px) * 3
-
-			// 读取 16-bit 值（Little Endian）
-			preview16Data[dstIdx] = binary.LittleEndian.Uint16(imageData[srcIdx:])     // R
-			preview16Data[dstIdx+1] = binary.LittleEndian.Uint16(imageData[srcIdx+2:]) // G
-			preview16Data[dstIdx+2] = binary.LittleEndian.Uint16(imageData[srcIdx+4:]) // B
-		}
 	}
 
 	// 应用色彩转换 (Linear Raw -> sRGB)
@@ -70,71 +43,101 @@ func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint3
 		}
 	}
 
-	// 获取色彩转换矩阵 (RAW -> XYZ)
-	bmtToXYZSlice, ok := x3fFile.GetBMTToXYZ(wb)
+	// 获取 ISO 缩放因子 (C 代码: capture_iso / sensor_iso)
+	isoScaling := 1.0
+	if sensorISO, ok := x3fFile.GetCAMFFloat("SensorISO"); ok {
+		if captureISO, ok := x3fFile.GetCAMFFloat("CaptureISO"); ok {
+			isoScaling = captureISO / sensorISO
+		}
+	}
+
+	// 获取色彩转换矩阵 (RAW -> XYZ, 包含白平衡增益)
+	// C 代码: x3f_get_raw_to_xyz = bmt_to_xyz × diag(gain)
+	rawToXYZSlice, ok := x3fFile.GetRawToXYZ(wb)
 	if !ok {
 		// 如果无法获取，使用 sRGB_to_XYZ 作为备选
-		bmtToXYZSlice = x3f.GetSRGBToXYZMatrix()
+		rawToXYZSlice = x3f.GetSRGBToXYZMatrix()
 	}
 
 	// 转换为 Matrix3x3
 	var rawToXYZ colorspace.Matrix3x3
-	copy(rawToXYZ[:], bmtToXYZSlice)
+	copy(rawToXYZ[:], rawToXYZSlice)
 
 	// XYZ_to_sRGB 标准矩阵
 	xyzToSRGBSlice := x3f.GetColorMatrix1ForDNG()
 	var xyzToSRGB colorspace.Matrix3x3
 	copy(xyzToSRGB[:], xyzToSRGBSlice)
 
+	// 计算最终的转换矩阵: xyz_to_sRGB × raw_to_xyz
+	// C 代码: x3f_3x3_3x3_mul(xyz_to_rgb, raw_to_xyz, raw_to_rgb)
+	// 然后应用 ISO 缩放: x3f_scalar_3x3_mul(iso_scaling, raw_to_rgb, conv_matrix)
+	rawToSRGB := xyzToSRGB.Multiply(rawToXYZ)
+
+	// 应用 ISO 缩放
+	for i := range rawToSRGB {
+		rawToSRGB[i] *= isoScaling
+	}
+
 	// 创建 8-bit sRGB 预览图缓冲区
 	previewData := make([]byte, previewWidth*previewHeight*3)
 
-	// 色彩转换：Linear Raw -> sRGB
-	for i := uint32(0); i < previewWidth*previewHeight; i++ {
-		srcIdx := i * 3
+	// Debug: 打印一些关键参数
+	if previewHeight > 0 && previewWidth > 0 {
+		_ = rawToSRGB // 避免未使用警告
+	}
 
-		// 读取 16-bit Linear Raw 值
-		r := float64(preview16Data[srcIdx])
-		g := float64(preview16Data[srcIdx+1])
-		b := float64(preview16Data[srcIdx+2])
+	// 色彩转换：Linear Raw -> sRGB (使用平均下采样)
+	// C 代码: x3f_process.c:966-995
+	for row := uint32(0); row < previewHeight; row++ {
+		for col := uint32(0); col < previewWidth; col++ {
+			// 对每个颜色通道进行平均下采样
+			var input [3]float64
 
-		// 应用黑电平和白电平归一化
-		r = (r - levels.Black[0]) / (float64(levels.White[0]) - levels.Black[0])
-		g = (g - levels.Black[1]) / (float64(levels.White[1]) - levels.Black[1])
-		b = (b - levels.Black[2]) / (float64(levels.White[2]) - levels.Black[2])
+			for color := 0; color < 3; color++ {
+				var acc uint32
 
-		// 限制范围 [0, 1]
-		if r < 0 {
-			r = 0
-		} else if r > 1 {
-			r = 1
+				// 平均 reduction × reduction 的像素块
+				for r := uint32(0); r < reduction; r++ {
+					for c := uint32(0); c < reduction; c++ {
+						srcRow := row*reduction + r
+						srcCol := col*reduction + c
+
+						// 读取 16-bit Linear Raw 值
+						srcIdx := (srcRow*width + srcCol) * 6
+						value := binary.LittleEndian.Uint16(imageData[srcIdx+uint32(color)*2:])
+						acc += uint32(value)
+					}
+				}
+
+				// 应用黑电平和白电平归一化
+				avgValue := float64(acc) / float64(reduction2)
+				input[color] = (avgValue - levels.Black[color]) / (float64(levels.White[color]) - levels.Black[color])
+
+				// 限制范围 [0, 1]
+				if input[color] < 0 {
+					input[color] = 0
+				} else if input[color] > 1 {
+					input[color] = 1
+				}
+			}
+
+			// RAW -> sRGB (使用预计算的组合矩阵)
+			// C 代码: x3f_3x3_3x1_mul(conv_matrix, input, output)
+			raw := colorspace.Vector3(input)
+			rgb := rawToSRGB.Apply(raw)
+
+			// 应用 sRGB gamma 校正
+			rgb = colorspace.ApplySRGBGamma(rgb)
+
+			// 转换为 8-bit
+			rgb8 := colorspace.ConvertToUint8(rgb)
+
+			// 写入 8-bit sRGB 值
+			dstIdx := (row*previewWidth + col) * 3
+			previewData[dstIdx] = rgb8[0]
+			previewData[dstIdx+1] = rgb8[1]
+			previewData[dstIdx+2] = rgb8[2]
 		}
-		if g < 0 {
-			g = 0
-		} else if g > 1 {
-			g = 1
-		}
-		if b < 0 {
-			b = 0
-		} else if b > 1 {
-			b = 1
-		}
-
-		// RAW -> XYZ -> sRGB
-		raw := colorspace.Vector3{r, g, b}
-		xyz := colorspace.ConvertRAWToXYZ(raw, rawToXYZ)
-		rgb := colorspace.ConvertXYZToRGB(xyz, xyzToSRGB)
-
-		// 应用 sRGB gamma 校正
-		rgb = colorspace.ApplySRGBGamma(rgb)
-
-		// 转换为 8-bit
-		rgb8 := colorspace.ConvertToUint8(rgb)
-
-		// 写入 8-bit sRGB 值
-		previewData[srcIdx] = rgb8[0]
-		previewData[srcIdx+1] = rgb8[1]
-		previewData[srcIdx+2] = rgb8[2]
 	}
 
 	return previewData, previewWidth, previewHeight
