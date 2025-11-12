@@ -81,6 +81,9 @@ func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	subIFD.AddLongArray(TagStripByteCounts, stripByteCounts)
 	subIFD.AddShort(TagPlanarConfiguration, 1)
 
+	// Chroma Blur Radius (tag 50703, 在 BlackLevel 之前)
+	subIFD.AddRationalFromFloat(TagChromaBlurRadius, 0.0, false)
+
 	// BlackLevel 使用固定分母 (16.16 定点格式,DNG 规范要求)
 	blackLevelRationals := make([][2]uint32, 3)
 	for i := 0; i < 3; i++ {
@@ -90,7 +93,6 @@ func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	subIFD.AddRationalArray(TagBlackLevel, blackLevelRationals)
 
 	subIFD.AddLongArray(TagWhiteLevel, levels.White[:])
-	subIFD.AddRationalFromFloat(TagChromaBlurRadius, 0.0, false)
 	subIFD.AddLongArray(TagActiveArea, []uint32{
 		activeAreaTop,
 		activeAreaLeft,

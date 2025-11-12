@@ -1878,3 +1878,74 @@ func convertSpatialGain(data []float64, dims []uint32) *SpatialGainCorr {
 		ColOff:   0,
 	}
 }
+
+// GetSRGBToXYZMatrix 获取 sRGB 到 XYZ 的标准矩阵
+func GetSRGBToXYZMatrix() []float64 {
+	return []float64{
+		0.4124564, 0.3575761, 0.1804375,
+		0.2126729, 0.7151522, 0.0721750,
+		0.0193339, 0.1191920, 0.9503041,
+	}
+}
+
+// GetForwardMatrixWithSRGB 获取基于 sRGB 标准矩阵的 ForwardMatrix1
+// 用于 "Unconverted" 和 "Linear sRGB" profiles
+func GetForwardMatrixWithSRGB() []float64 {
+	sRGBToXYZ := GetSRGBToXYZMatrix()
+	d65ToD50 := GetD65ToD50Matrix()
+	return multiply3x3(d65ToD50, sRGBToXYZ)
+}
+
+// GetForwardMatrixGrayscale 获取灰度模式的 ForwardMatrix1
+// grayscaleMix: [R, G, B] 权重数组，例如 [1/3, 1/3, 1/3] 或 [2, -1, 0]
+func GetForwardMatrixGrayscale(grayscaleMix [3]float64) []float64 {
+	// D50 白点 XYZ 值
+	d50XYZ := [3]float64{0.96422, 1.00000, 0.82521}
+
+	// 创建对角矩阵 diag(grayscaleMix)
+	grayscaleMixMat := [9]float64{
+		grayscaleMix[0], 0, 0,
+		0, grayscaleMix[1], 0,
+		0, 0, grayscaleMix[2],
+	}
+
+	// 创建全 1 矩阵
+	ones := [9]float64{
+		1, 1, 1,
+		1, 1, 1,
+		1, 1, 1,
+	}
+
+	// bmt_to_grayscale = ones × grayscale_mix_mat
+	bmtToGrayscale := [9]float64{}
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			sum := 0.0
+			for k := 0; k < 3; k++ {
+				sum += ones[i*3+k] * grayscaleMixMat[k*3+j]
+			}
+			bmtToGrayscale[i*3+j] = sum
+		}
+	}
+
+	// 创建对角矩阵 diag(d50_xyz)
+	d50XYZMat := [9]float64{
+		d50XYZ[0], 0, 0,
+		0, d50XYZ[1], 0,
+		0, 0, d50XYZ[2],
+	}
+
+	// bmt_to_d50 = d50_xyz_mat × bmt_to_grayscale
+	result := make([]float64, 9)
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 3; j++ {
+			sum := 0.0
+			for k := 0; k < 3; k++ {
+				sum += d50XYZMat[i*3+k] * bmtToGrayscale[k*3+j]
+			}
+			result[i*3+j] = sum
+		}
+	}
+
+	return result
+}

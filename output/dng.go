@@ -1,10 +1,12 @@
 package output
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"unsafe"
 
 	"github.com/weaming/x3f-go/matrix"
@@ -29,7 +31,7 @@ const (
 	TagBaselineSharpness   = 50732
 	TagLinearResponseLimit = 50734
 	TagCameraSerialNumber  = 50735
-	TagChromaBlurRadius    = 50703
+	TagChromaBlurRadius    = 50737
 	TagBlackLevel          = 50714
 	TagWhiteLevel          = 50717
 	TagCalibrationIllum1   = 50778
@@ -39,6 +41,7 @@ const (
 	TagForwardMatrix2      = 50965
 	TagAsShotProfileName   = 50934
 	TagProfileName         = 50936
+	TagExtraCameraProfiles = 50933
 	TagDefaultBlackRender  = 51110
 	TagOpcodeList2         = 51009
 )
@@ -72,6 +75,23 @@ const (
 	LightSourceStandardC     = 19
 )
 
+// Camera Profile 类型
+type CameraProfile struct {
+	Name          string
+	GrayscaleMix  *[3]float64 // nil 表示不是灰度模式
+	UseSRGBMatrix bool        // true 使用 sRGB 标准矩阵，false 使用相机特定矩阵
+}
+
+// 预定义的 Camera Profiles（匹配 C 版本）
+var DefaultCameraProfiles = []CameraProfile{
+	{"Default", nil, false}, // 使用相机 CAMF ColorCorrections
+	{"Grayscale", &[3]float64{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}, false},
+	{"Grayscale (red filter)", &[3]float64{2.0, -1.0, 0.0}, false},
+	{"Grayscale (blue filter)", &[3]float64{0.0, -1.0, 2.0}, false},
+	{"Unconverted", nil, true}, // 使用 sRGB 标准矩阵
+	{"Linear sRGB", nil, true},
+}
+
 // DNGOptions DNG 输出选项
 type DNGOptions struct {
 	CameraModel     string
@@ -82,6 +102,179 @@ type DNGOptions struct {
 	LinearOutput    bool
 	NoCrop          bool
 	CompatibleWithC bool // 生成与 C 版本完全相同的输出（不裁剪，输出完整图像）
+}
+
+// writeCameraProfileIFD 为单个 camera profile 生成 Big Endian IFD 数据
+// 返回完整的 TIFF IFD 结构（不包含 magic bytes）
+func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) ([]byte, error) {
+	// 计算 ColorMatrix1 和 ForwardMatrix1
+	colorMatrix1 := x3f.GetColorMatrix1ForDNG()
+
+	var forwardMatrix1 []float64
+
+	if profile.GrayscaleMix != nil {
+		// Grayscale profile: 使用 grayscale_mix 计算
+		forwardMatrix1 = x3f.GetForwardMatrixGrayscale(*profile.GrayscaleMix)
+	} else if profile.UseSRGBMatrix {
+		// sRGB profile: 使用标准 sRGB 矩阵
+		forwardMatrix1 = x3f.GetForwardMatrixWithSRGB()
+	} else {
+		// Default profile: 使用 CAMF ColorCorrections
+		var ok bool
+		forwardMatrix1, ok = x3fFile.GetForwardMatrix1ForDNG(wb)
+		if !ok {
+			return nil, fmt.Errorf("无法获取 ForwardMatrix1: 白平衡 '%s' 的 ColorCorrections 数据读取失败", wb)
+		}
+	}
+
+	// 创建一个内存缓冲区来写入 Big Endian TIFF 文件
+	buf := &bytes.Buffer{}
+
+	// 写入 TIFF magic (Big Endian) - 稍后会被 MMCR 替换
+	binary.Write(buf, binary.BigEndian, uint16(0x4d4d)) // 'MM'
+	binary.Write(buf, binary.BigEndian, uint16(42))     // TIFF magic
+	binary.Write(buf, binary.BigEndian, uint32(8))      // IFD offset at 8
+
+	// 准备 IFD entries
+	type ifdEntry struct {
+		tag           uint16
+		typ           uint16
+		count         uint32
+		valueOrOffset uint32
+	}
+
+	entries := []ifdEntry{}
+	extraData := &bytes.Buffer{}
+	// 我们有 5 个 tags: Compression, ColorMatrix1, ForwardMatrix1, ProfileName, DefaultBlackRender
+	// 计算初始偏移：magic(4) + offset(4) + count(2) + entries(12*5) + next(4)
+	extraDataOffset := uint32(8 + 2 + 12*5 + 4)
+
+	// Helper: 添加 Rational 数组
+	addRationalArray := func(tag uint16, values []float64, signed bool) {
+		count := uint32(len(values))
+		offset := extraDataOffset
+
+		for _, v := range values {
+			num, denom := floatToRational(v, 1000000000)
+			if signed {
+				binary.Write(extraData, binary.BigEndian, int32(num))
+				binary.Write(extraData, binary.BigEndian, int32(denom))
+			} else {
+				binary.Write(extraData, binary.BigEndian, uint32(num))
+				binary.Write(extraData, binary.BigEndian, uint32(denom))
+			}
+		}
+
+		typ := uint16(5) // RATIONAL
+		if signed {
+			typ = 10 // SRATIONAL
+		}
+		entries = append(entries, ifdEntry{tag, typ, count, offset})
+		extraDataOffset += count * 8
+	}
+
+	// Helper: 添加 ASCII 字符串
+	addASCII := func(tag uint16, value string) {
+		data := []byte(value)
+		data = append(data, 0) // null terminator
+		count := uint32(len(data))
+
+		if count <= 4 {
+			// 可以内联
+			var valueBytes [4]byte
+			copy(valueBytes[:], data)
+			entries = append(entries, ifdEntry{tag, 2, count, binary.BigEndian.Uint32(valueBytes[:])})
+		} else {
+			offset := extraDataOffset
+			extraData.Write(data)
+			// Pad to even boundary
+			if len(data)%2 != 0 {
+				extraData.WriteByte(0)
+			}
+			entries = append(entries, ifdEntry{tag, 2, count, offset})
+			extraDataOffset += uint32(len(data))
+			if len(data)%2 != 0 {
+				extraDataOffset++
+			}
+		}
+	}
+
+	// Helper: 添加 LONG
+	addLong := func(tag uint16, value uint32) {
+		entries = append(entries, ifdEntry{tag, 4, 1, value}) // LONG = 4
+	}
+
+	// 添加 tags (按照 tag ID 排序)
+	addLong(TagCompression, 1) // Uncompressed
+	addRationalArray(TagColorMatrix1, colorMatrix1, true)
+	addRationalArray(TagForwardMatrix1, forwardMatrix1, true)
+	addASCII(TagProfileName, profile.Name)
+	addLong(TagDefaultBlackRender, 1) // None
+
+	// 按 tag ID 排序
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].tag < entries[j].tag
+	})
+
+	// 写入 IFD
+	binary.Write(buf, binary.BigEndian, uint16(len(entries)))
+	for _, entry := range entries {
+		binary.Write(buf, binary.BigEndian, entry.tag)
+		binary.Write(buf, binary.BigEndian, entry.typ)
+		binary.Write(buf, binary.BigEndian, entry.count)
+		binary.Write(buf, binary.BigEndian, entry.valueOrOffset)
+	}
+	binary.Write(buf, binary.BigEndian, uint32(0)) // Next IFD offset = 0
+
+	// 写入额外数据
+	buf.Write(extraData.Bytes())
+
+	return buf.Bytes(), nil
+}
+
+// writeExtraCameraProfiles 写入额外的 camera profiles 到文件
+// 返回所有额外 profile 的偏移量数组
+func writeExtraCameraProfiles(file *os.File, x3fFile *x3f.File, wb string, profiles []CameraProfile) ([]uint32, error) {
+	if len(profiles) <= 1 {
+		return nil, nil
+	}
+
+	offsets := make([]uint32, 0, len(profiles)-1)
+
+	for i := 1; i < len(profiles); i++ {
+		// 获取当前文件位置
+		currentPos, err := file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return nil, err
+		}
+
+		// 2 字节对齐
+		if currentPos%2 != 0 {
+			file.Write([]byte{0})
+			currentPos++
+		}
+
+		// 记录偏移量
+		offsets = append(offsets, uint32(currentPos))
+
+		// 写入 DCP 魔法字节 (Big Endian)
+		if _, err := file.Write([]byte{'M', 'M', 'C', 'R'}); err != nil {
+			return nil, err
+		}
+
+		// 生成 profile IFD 数据
+		ifdData, err := writeCameraProfileIFD(x3fFile, wb, profiles[i])
+		if err != nil {
+			return nil, fmt.Errorf("无法生成 profile '%s' 的 IFD: %v", profiles[i].Name, err)
+		}
+
+		// 写入 IFD 数据（跳过前 4 个字节，因为我们已经写了 MMCR）
+		if _, err := file.Write(ifdData[4:]); err != nil {
+			return nil, err
+		}
+	}
+
+	return offsets, nil
 }
 
 // floatToRational 使用连分数算法将浮点数转换为有理数
@@ -379,15 +572,38 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 		}
 	}
 
+	// 生成预览图 (8-bit sRGB, max width=300)
+	previewData, previewWidth, previewHeight := generatePreviewImage(imageData, targetWidth, targetHeight, 300, x3fFile, wb)
+
 	// 使用 IFDWriter 自动管理偏移
 	ifd0 := NewIFDWriter(file)
+
+	// Preview image tags (IFD0 包含预览图)
+	ifd0.AddLong(TagNewSubfileType, 1) // 1 = Reduced-resolution image
+	ifd0.AddLong(TagImageWidth, previewWidth)
+	ifd0.AddLong(TagImageLength, previewHeight)
+	ifd0.AddShortArray(TagBitsPerSample, []uint16{8, 8, 8})
+	ifd0.AddShort(TagCompression, 1) // Uncompressed
+	ifd0.AddShort(TagPhotometricInterpret, PhotometricRGB)
+
+	// Strip Offsets - 预留，稍后回写
+	_ = ifd0.ReservePointer(TagStripOffsets)
+
+	// Orientation
+	ifd0.AddShort(TagOrientation, 1) // 1 = Horizontal (normal)
+
+	ifd0.AddShort(TagSamplesPerPixel, 3)
+	ifd0.AddLong(TagRowsPerStrip, previewHeight)
+
+	// Strip Byte Counts
+	previewStripByteCount := previewWidth * previewHeight * 3
+	ifd0.AddLong(TagStripByteCounts, previewStripByteCount)
+
+	ifd0.AddShort(TagPlanarConfiguration, 1) // Chunky
 
 	// Software (保留,用于标识生成工具)
 	software := "x3f-go " + Version
 	ifd0.AddASCII(TagSoftware, software, 32)
-
-	// Orientation
-	ifd0.AddShort(TagOrientation, 1) // 1 = Horizontal (normal)
 
 	// SubIFDs - 预留指针,稍后更新
 	_ = ifd0.ReservePointer(TagSubIFDs)
@@ -447,8 +663,22 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 	// Default Black Render (1 = None, 不是 0)
 	ifd0.AddLong(TagDefaultBlackRender, 1) // 1 = None
 
+	// 预留 ExtraCameraProfiles 标签（稍后回写偏移量）
+	// 添加占位符数组
+	if len(DefaultCameraProfiles) > 1 {
+		// 创建占位符数组（数量 = profiles 数量 - 1）
+		placeholders := make([]uint32, len(DefaultCameraProfiles)-1)
+		ifd0.AddLongArray(TagExtraCameraProfiles, placeholders)
+	}
+
 	// 写入 IFD0
 	if _, err := ifd0.Write(); err != nil {
+		return err
+	}
+
+	// 写入预览图数据
+	previewStripOffset, _ := file.Seek(0, io.SeekCurrent)
+	if _, err := file.Write(previewData); err != nil {
 		return err
 	}
 
@@ -461,26 +691,59 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 		return err
 	}
 
+	// 写入额外的 Camera Profiles
+	var profileOffsets []uint32
+	if len(DefaultCameraProfiles) > 1 {
+		// 移动到文件末尾
+		file.Seek(0, io.SeekEnd)
+
+		// 写入所有额外的 profiles (从第 2 个开始)
+		offsets, err := writeExtraCameraProfiles(file, x3fFile, wb, DefaultCameraProfiles)
+		if err != nil {
+			return fmt.Errorf("写入额外 Camera Profiles 失败: %v", err)
+		}
+		profileOffsets = offsets
+	}
+
 	// 回写 SubIFD 偏移到 IFD0 的 SubIFDs 标签
-	// 需要重新定位到 IFD0 entry 并更新
+	// 以及 ExtraCameraProfiles 偏移量数组（如果有）
 	file.Seek(8, io.SeekStart) // IFD0 开始位置
 
 	// 读取 entry 数量
 	var numEntries uint16
 	binary.Read(file, binary.LittleEndian, &numEntries)
 
-	// 遍历找到 SubIFDs tag (330)
+	// 遍历找到需要更新的 tags
 	for i := uint16(0); i < numEntries; i++ {
 		var tag, typ uint16
 		var count, value uint32
+
 		binary.Read(file, binary.LittleEndian, &tag)
 		binary.Read(file, binary.LittleEndian, &typ)
 		binary.Read(file, binary.LittleEndian, &count)
 
-		if tag == TagSubIFDs {
-			// 找到了,更新 value 字段
+		if tag == TagStripOffsets {
+			// 更新预览图 Strip Offsets
+			binary.Write(file, binary.LittleEndian, uint32(previewStripOffset))
+		} else if tag == TagSubIFDs {
+			// 更新 SubIFD 偏移
 			binary.Write(file, binary.LittleEndian, uint32(subIFDStartPos))
-			break
+		} else if tag == TagExtraCameraProfiles && len(profileOffsets) > 0 {
+			// 读取当前的 value（指向偏移量数组的位置）
+			var offsetArrayPos uint32
+			binary.Read(file, binary.LittleEndian, &offsetArrayPos)
+
+			// 保存当前位置
+			currentPos, _ := file.Seek(0, io.SeekCurrent)
+
+			// 跳到偏移量数组位置，更新实际的偏移量
+			file.Seek(int64(offsetArrayPos), io.SeekStart)
+			for _, offset := range profileOffsets {
+				binary.Write(file, binary.LittleEndian, offset)
+			}
+
+			// 恢复位置继续扫描
+			file.Seek(currentPos, io.SeekStart)
 		} else {
 			// 跳过 value 字段
 			binary.Read(file, binary.LittleEndian, &value)
