@@ -7,7 +7,7 @@ build/
 *.dylib
 raw/
 claude-docs/
-x3f-go
+bin/
 
 # Test files
 *.x3f

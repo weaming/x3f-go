@@ -24,7 +24,7 @@ type Config struct {
 	DumpMeta        bool
 	Unprocessed     bool
 	Qtop            bool
-	JPEGQuality     int
+	Quality         int
 }
 
 func main() {
@@ -54,26 +54,18 @@ func parseFlags() *Config {
 		"色彩空间: none, sRGB, AdobeRGB, ProPhotoRGB")
 	flag.StringVar(&config.WhiteBalance, "wb", "Auto",
 		"白平衡: Auto, Sunlight, Shadow, Overcast, Incandescent, Florescent, Flash, Custom, ColorTemp, AutoLSP")
-	flag.StringVar(&config.ToneMapping, "tm", "agx",
-		"色调映射: agx, aces, none")
-	flag.BoolVar(&config.Verbose, "v", false,
-		"详细输出")
-	flag.BoolVar(&config.NoCrop, "no-crop", false,
-		"不裁剪，输出完整解码数据")
-	flag.BoolVar(&config.CompatibleWithC, "c", false,
-		"C 兼容模式：生成与 C 版本完全相同的输出（完整图像+Active Area）")
-	flag.BoolVar(&config.DumpMeta, "meta", false,
-		"输出元数据到 <输入文件>.meta")
-	flag.BoolVar(&config.Unprocessed, "unprocessed", false,
-		"输出未处理的原始 RAW 数据（默认输出预处理后的数据）")
-	flag.BoolVar(&config.Qtop, "qtop", false,
-		"输出 Quattro top 层数据（仅用于 Quattro 格式）")
-	flag.IntVar(&config.JPEGQuality, "jpg-quality", 98,
-		"JPEG 质量 (1-100)")
+	flag.StringVar(&config.ToneMapping, "tm", "agx", "色调映射: agx, aces, none")
+	flag.BoolVar(&config.Verbose, "v", false, "详细输出")
+	flag.BoolVar(&config.NoCrop, "no-crop", false, "不裁剪，输出完整解码数据")
+	flag.BoolVar(&config.CompatibleWithC, "c", false, "C 兼容模式：生成与 C 版本完全相同的输出（ppm, dng）")
+	flag.BoolVar(&config.DumpMeta, "meta", false, "输出元数据到 <输入文件>.meta")
+	flag.BoolVar(&config.Unprocessed, "unprocessed", false, "输出未处理的原始 RAW 数据（默认输出预处理后的数据）")
+	flag.BoolVar(&config.Qtop, "qtop", false, "输出 Quattro top 层数据（仅用于 Quattro 格式）")
+	flag.IntVar(&config.Quality, "quality", 98, "JPEG/HEIF 质量 (1-100)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "x3f-go version %s\n", x3f.Version)
-		fmt.Fprintf(os.Stderr, "Go implementation of X3F RAW converter\n\n")
+		fmt.Fprintf(os.Stderr, "\nGo implementation of X3F RAW converter\n\n")
 		fmt.Fprintf(os.Stderr, "用法: x3f-go [选项] <输入.x3f>\n\n")
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
@@ -82,6 +74,7 @@ func parseFlags() *Config {
 		fmt.Fprintf(os.Stderr, "  .tiff  - TIFF (线性 sRGB)\n")
 		fmt.Fprintf(os.Stderr, "  .jpg   - JPEG (带色调映射和伽马校正)\n")
 		fmt.Fprintf(os.Stderr, "  .heif  - HEIF (高效图像格式)\n")
+		fmt.Fprintf(os.Stderr, "  .ppm   - P3 (PPM ASCII, 用于和 C 版本对比测试)\n")
 		fmt.Fprintf(os.Stderr, "\n示例:\n")
 		fmt.Fprintf(os.Stderr, "  x3f-go -o output.dng input.x3f\n")
 		fmt.Fprintf(os.Stderr, "  x3f-go -o output.jpg -wb Sunlight -cs AdobeRGB input.x3f\n")
@@ -408,7 +401,7 @@ func convertToJPEG(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error 
 	}
 
 	// 验证 JPEG 质量参数
-	quality := config.JPEGQuality
+	quality := config.Quality
 	if quality < 1 || quality > 100 {
 		return fmt.Errorf("JPEG 质量必须在 1-100 之间，当前值: %d", quality)
 	}
@@ -471,7 +464,7 @@ func convertToHEIF(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error 
 	}
 
 	heifOpts := output.HEIFOptions{
-		Quality:  98,
+		Quality:  config.Quality,
 		Use10Bit: true,
 	}
 
