@@ -9,22 +9,17 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/weaming/x3f-go/colorspace"
-	"github.com/weaming/x3f-go/processor"
+	"github.com/weaming/x3f-go/x3f"
 )
 
 // HEIFOptions HEIF 输出选项
 type HEIFOptions struct {
-	Quality      int  // 1-100, 默认 90
-	ApplyGamma   bool // 是否应用 gamma 校正
-	ToneMapping  bool // 是否应用色调映射
-	AutoExposure bool // 是否自动曝光
-	Exposure     float64
-	Use10Bit     bool // 是否使用 10-bit 编码
+	Quality  int  // 1-100, 默认 90
+	Use10Bit bool // 是否使用 10-bit 编码
 }
 
-// WriteHEIF 写入 HEIF 文件
-func WriteHEIF(img *processor.ProcessedImage, filename string, opts HEIFOptions) error {
+// 写入 HEIF 文件
+func WriteHEIF(img *x3f.ProcessedImage, filename string, opts HEIFOptions) error {
 	// 检查是否安装了 heif-enc 或其他 HEIF 编码器
 	encoder := findHEIFEncoder()
 	if encoder == "" {
@@ -35,49 +30,27 @@ func WriteHEIF(img *processor.ProcessedImage, filename string, opts HEIFOptions)
 	tempPNG := filepath.Join(os.TempDir(), "x3f_temp.png")
 	defer os.Remove(tempPNG)
 
-	// 创建 PNG 图像
+	// 创建 PNG 图像（不使用并发，只做简单的格式转换）
+	// 所有 CPU 密集型计算已经在 ProcessImageUnified 中完成
 	rgbaImg := image.NewRGBA(image.Rect(0, 0, int(img.Width), int(img.Height)))
 
-	// 转换数据
 	for y := 0; y < int(img.Height); y++ {
 		for x := 0; x < int(img.Width); x++ {
 			idx := (y*int(img.Width) + x) * 3
 
-			rgb := colorspace.Vector3{
+			// 直接转换为 8-bit（所有处理已在 ProcessImageUnified 中完成）
+			rgb8 := x3f.ConvertToUint8(x3f.Vector3{
 				img.Data[idx],
 				img.Data[idx+1],
 				img.Data[idx+2],
-			}
+			})
 
-			// 应用处理
-			if opts.AutoExposure {
-				rgb, _ = colorspace.AutoExposure(rgb, 0.18)
-			} else if opts.Exposure != 0 {
-				rgb = colorspace.SimpleExposure(rgb, opts.Exposure)
-			}
-
-			if opts.ToneMapping {
-				rgb = colorspace.ACESToneMapping(rgb)
-			}
-
-			if opts.ApplyGamma {
-				rgb = colorspace.ApplySRGBGamma(rgb)
-			}
-
-			// 转换为 8-bit (或 10-bit 如果支持)
-			var r, g, b uint8
-			if opts.Use10Bit {
-				// 10-bit 需要特殊处理，这里简化为 8-bit
-				rgb16 := colorspace.ConvertToUint16(rgb)
-				r = uint8(rgb16[0] >> 8)
-				g = uint8(rgb16[1] >> 8)
-				b = uint8(rgb16[2] >> 8)
-			} else {
-				rgb8 := colorspace.ConvertToUint8(rgb)
-				r, g, b = rgb8[0], rgb8[1], rgb8[2]
-			}
-
-			rgbaImg.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
+			rgbaImg.SetRGBA(x, y, color.RGBA{
+				R: rgb8[0],
+				G: rgb8[1],
+				B: rgb8[2],
+				A: 255,
+			})
 		}
 	}
 
@@ -107,7 +80,7 @@ func WriteHEIF(img *processor.ProcessedImage, filename string, opts HEIFOptions)
 	return nil
 }
 
-// findHEIFEncoder 查找可用的 HEIF 编码器
+// 查找可用的 HEIF 编码器
 func findHEIFEncoder() string {
 	encoders := []string{
 		"heif-enc", // libheif
@@ -125,8 +98,8 @@ func findHEIFEncoder() string {
 	return ""
 }
 
-// ExportHEIF 导出为 HEIF
-func ExportHEIF(img *processor.ProcessedImage, filename string, opts HEIFOptions) error {
+// 导出为 HEIF
+func ExportHEIF(img *x3f.ProcessedImage, filename string, opts HEIFOptions) error {
 	if img == nil {
 		return fmt.Errorf("图像为空")
 	}
@@ -134,8 +107,8 @@ func ExportHEIF(img *processor.ProcessedImage, filename string, opts HEIFOptions
 	return WriteHEIF(img, filename, opts)
 }
 
-// ExportHEIFSimple 简化版 HEIF 导出（如果没有外部编码器，返回错误提示）
-func ExportHEIFSimple(img *processor.ProcessedImage, filename string) error {
+// 简化版 HEIF 导出（如果没有外部编码器，返回错误提示）
+func ExportHEIFSimple(img *x3f.ProcessedImage, filename string) error {
 	if img == nil {
 		return fmt.Errorf("图像为空")
 	}
@@ -151,8 +124,7 @@ func ExportHEIFSimple(img *processor.ProcessedImage, filename string) error {
 	}
 
 	return WriteHEIF(img, filename, HEIFOptions{
-		Quality:     90,
-		ApplyGamma:  true,
-		ToneMapping: true,
+		Quality:  90,
+		Use10Bit: false,
 	})
 }

@@ -7,9 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/weaming/x3f-go/colorspace"
 	"github.com/weaming/x3f-go/output"
-	"github.com/weaming/x3f-go/processor"
 	"github.com/weaming/x3f-go/x3f"
 )
 
@@ -18,32 +16,27 @@ type Config struct {
 	Output          string
 	ColorSpace      string
 	WhiteBalance    string
+	ToneMapping     string
 	Verbose         bool
 	ShowVersion     bool
 	NoCrop          bool
 	CompatibleWithC bool
 	DumpMeta        bool
 	Unprocessed     bool
+	Qtop            bool
+	JPEGQuality     int
 }
 
 func main() {
 	config := parseFlags()
 
-	if config.ShowVersion {
-		fmt.Printf("x3f-go version %s\n", output.Version)
-		fmt.Println("Go implementation of X3F RAW converter")
-		os.Exit(0)
-	}
-
 	if config.Input == "" {
 		fmt.Fprintln(os.Stderr, "错误: 必须指定输入文件")
-		flag.Usage()
 		os.Exit(1)
 	}
 
 	if config.Output == "" && !config.DumpMeta {
 		fmt.Fprintln(os.Stderr, "错误: 必须指定输出文件 (-o) 或使用 -meta")
-		flag.Usage()
 		os.Exit(1)
 	}
 
@@ -61,10 +54,10 @@ func parseFlags() *Config {
 		"色彩空间: none, sRGB, AdobeRGB, ProPhotoRGB")
 	flag.StringVar(&config.WhiteBalance, "wb", "Auto",
 		"白平衡: Auto, Sunlight, Shadow, Overcast, Incandescent, Florescent, Flash, Custom, ColorTemp, AutoLSP")
+	flag.StringVar(&config.ToneMapping, "tm", "agx",
+		"色调映射: agx, aces, none")
 	flag.BoolVar(&config.Verbose, "v", false,
 		"详细输出")
-	flag.BoolVar(&config.ShowVersion, "version", false,
-		"显示版本信息")
 	flag.BoolVar(&config.NoCrop, "no-crop", false,
 		"不裁剪，输出完整解码数据")
 	flag.BoolVar(&config.CompatibleWithC, "c", false,
@@ -73,8 +66,14 @@ func parseFlags() *Config {
 		"输出元数据到 <输入文件>.meta")
 	flag.BoolVar(&config.Unprocessed, "unprocessed", false,
 		"输出未处理的原始 RAW 数据（默认输出预处理后的数据）")
+	flag.BoolVar(&config.Qtop, "qtop", false,
+		"输出 Quattro top 层数据（仅用于 Quattro 格式）")
+	flag.IntVar(&config.JPEGQuality, "jpg-quality", 98,
+		"JPEG 质量 (1-100)")
 
 	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "x3f-go version %s\n", x3f.Version)
+		fmt.Fprintf(os.Stderr, "Go implementation of X3F RAW converter\n\n")
 		fmt.Fprintf(os.Stderr, "用法: x3f-go [选项] <输入.x3f>\n\n")
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
@@ -99,85 +98,100 @@ func parseFlags() *Config {
 }
 
 func run(config *Config) error {
-	if config.Verbose {
-		fmt.Printf("打开 X3F 文件: %s\n", config.Input)
-	}
+	logger := x3f.NewLogger()
 
-	// Open X3F file
+	// 步骤 1: 打开文件
+	logger.Step("打开文件", filepath.Base(config.Input))
 	x3fFile, err := x3f.Open(config.Input)
 	if err != nil {
 		return fmt.Errorf("无法打开 X3F 文件: %w", err)
 	}
 	defer x3fFile.Close()
+	logger.Done(fmt.Sprintf("版本=%.1f", float64(x3fFile.Header.Version)/65536.0))
 
-	if config.Verbose {
-		fmt.Printf("X3F 版本: 0x%08x\n", x3fFile.Header.Version)
-		fmt.Printf("文件头尺寸: %dx%d\n", x3fFile.Header.Columns, x3fFile.Header.Rows)
-	}
-
-	// Load required sections
+	// 步骤 2: 加载元数据
+	logger.Step("加载元数据")
 	if err := x3fFile.LoadSection(x3f.SECp); err != nil && config.Verbose {
-		fmt.Printf("警告: 无法加载属性段: %v\n", err)
+		logger.Warn("属性段加载失败")
 	}
-
-	// CAMF 段目前不支持解码，所以会失败
-	// 这不影响基本的图像提取功能
-	if err := x3fFile.LoadSection(x3f.SECc); err != nil {
-		if config.Verbose {
-			fmt.Printf("注意: CAMF 段未加载 (需要解码支持): %v\n", err)
-		}
-	} else if config.Verbose {
-		fmt.Printf("CAMF 段加载成功\n")
+	if err := x3fFile.LoadSection(x3f.SECc); err != nil && config.Verbose {
+		logger.Warn("CAMF 段加载失败")
 	}
+	logger.Done("完成")
 
 	// 如果指定了 -meta,输出元数据并退出
 	if config.DumpMeta {
 		return dumpMetadata(x3fFile, config)
 	}
 
-	// Determine output format from extension
+	// 确定输出格式
 	outputExt := strings.ToLower(filepath.Ext(config.Output))
-
 	if config.Verbose {
-		fmt.Printf("输出格式: %s\n", outputExt)
-		fmt.Printf("色彩空间: %s\n", config.ColorSpace)
-		fmt.Printf("白平衡: %s\n", config.WhiteBalance)
+		logger.Info("输出: %s, 色彩空间: %s, 白平衡: %s",
+			outputExt, config.ColorSpace, config.WhiteBalance)
 	}
 
+	// 检查 -c 参数只能用于 ppm 和 dng 格式
+	if config.CompatibleWithC && outputExt != ".ppm" && outputExt != ".dng" {
+		return fmt.Errorf("-c 参数只支持 PPM 和 DNG 格式，当前格式: %s", outputExt)
+	}
+
+	// 调度到对应的转换函数
+	var convertErr error
 	switch outputExt {
 	case ".dng":
-		return convertToDNG(x3fFile, config)
+		convertErr = convertToDNG(x3fFile, config, logger)
 	case ".tiff", ".tif":
-		return convertToTIFF(x3fFile, config)
+		convertErr = convertToTIFF(x3fFile, config, logger)
 	case ".jpg", ".jpeg":
-		return convertToJPEG(x3fFile, config)
+		convertErr = convertToJPEG(x3fFile, config, logger)
 	case ".heif", ".heic":
-		return convertToHEIF(x3fFile, config)
+		convertErr = convertToHEIF(x3fFile, config, logger)
 	case ".ppm":
-		return convertToPPM(x3fFile, config)
+		convertErr = convertToPPM(x3fFile, config)
 	default:
-		return fmt.Errorf("不支持的输出格式: %s (支持: .dng, .tiff, .jpg, .heif, .ppm)", outputExt)
+		return fmt.Errorf("不支持的输出格式: %s", outputExt)
 	}
+
+	if convertErr == nil {
+		logger.Total()
+	}
+	return convertErr
 }
 
-func getColorSpace(name string) colorspace.ColorSpace {
+func getColorSpace(name string) x3f.ColorSpace {
 	switch strings.ToLower(name) {
 	case "none":
-		return colorspace.ColorSpaceNone
+		return x3f.ColorSpaceNone
 	case "srgb":
-		return colorspace.ColorSpaceSRGB
+		return x3f.ColorSpaceSRGB
 	case "adobergb":
-		return colorspace.ColorSpaceAdobeRGB
+		return x3f.ColorSpaceAdobeRGB
 	case "prophoto", "prophotorgb":
-		return colorspace.ColorSpaceProPhotoRGB
+		return x3f.ColorSpaceProPhotoRGB
 	default:
-		return colorspace.ColorSpaceSRGB
+		return x3f.ColorSpaceSRGB
 	}
 }
 
-func loadAndProcessImage(x3fFile *x3f.File, config *Config, opts processor.ProcessOptions) (*processor.ProcessedImage, error) {
+func getToneMappingMethod(name string) x3f.ToneMappingMethod {
+	switch strings.ToLower(name) {
+	case "aces":
+		return x3f.ToneMappingACES
+	case "agx":
+		return x3f.ToneMappingAgX
+	case "none":
+		return x3f.ToneMappingNone
+	default:
+		return x3f.ToneMappingAgX
+	}
+}
+
+func loadAndProcessImage(x3fFile *x3f.File, config *Config, opts x3f.ProcessOptions, logger *x3f.Logger) (*x3f.ProcessedImage, error) {
 	// 查找 RAW 图像段
 	var rawSection *x3f.ImageSection
+
+	logger.Step("加载图像段")
 
 	if config.Verbose {
 		fmt.Printf("目录中共有 %d 个条目\n", len(x3fFile.Directory.Entries))
@@ -236,82 +250,27 @@ func loadAndProcessImage(x3fFile *x3f.File, config *Config, opts processor.Proce
 		}
 	}
 
+	logger.Done("完成")
+
 	// 处理图像
-	return processor.ProcessRAW(x3fFile, rawSection, opts)
+	return x3f.ProcessRAW(x3fFile, rawSection, opts, logger)
 }
 
-func convertToDNG(x3fFile *x3f.File, config *Config) error {
-	if config.Verbose {
-		fmt.Println("转换为 DNG...")
+func convertToDNG(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error {
+	// 使用统一的图像处理流程
+	opts := x3f.ProcessOptions{
+		WhiteBalance:     config.WhiteBalance,
+		NoCrop:           config.NoCrop,
+		IntermediateOnly: true, // DNG 只需要 intermediate 数据
 	}
 
-	// DNG 应该输出未经色彩处理的线性 RAW 数据
-	// 直接从解码后的图像段获取数据,不经过 ProcessRAW 的色彩转换
-
-	// 查找 RAW 图像段
-	var rawSection *x3f.ImageSection
-	for _, entry := range x3fFile.Directory.Entries {
-		isImageSection := entry.Type == x3f.SECi ||
-			entry.Type == x3f.IMA2 ||
-			entry.Type == x3f.IMAG
-
-		if isImageSection {
-			if err := x3fFile.LoadImageSection(&entry); err != nil {
-				if config.Verbose {
-					fmt.Printf("警告: 无法加载图像段: %v\n", err)
-				}
-				continue
-			}
-		}
-	}
-
-	if len(x3fFile.ImageData) == 0 {
-		return fmt.Errorf("未找到图像数据")
-	}
-
-	rawSection = x3fFile.ImageData[len(x3fFile.ImageData)-1]
-
-	// 解码图像
-	if rawSection.DecodedData == nil {
-		if err := rawSection.DecodeImage(); err != nil {
-			return fmt.Errorf("解码图像失败: %w", err)
-		}
-	}
-
-	// 获取白平衡
-	wb := config.WhiteBalance
-	if wb == "" {
-		wb = x3fFile.GetWhiteBalance()
-	}
-
-	// 在预处理之前,计算 intermediate 数据的电平信息(用于 linear sRGB 转换)
-	var intermediateBias float64
-	var maxIntermediate [3]uint32
-	hasIntermediateData := false
-
-	if !config.CompatibleWithC {
-		blackLevel, err := processor.CalculateBlackLevel(x3fFile, rawSection)
-		if err == nil {
-			if bias, ok := processor.GetIntermediateBias(x3fFile, wb, blackLevel); ok {
-				intermediateBias = bias
-				if maxInt, ok2 := processor.GetMaxIntermediate(x3fFile, wb, intermediateBias); ok2 {
-					maxIntermediate = maxInt
-					hasIntermediateData = true
-				}
-			}
-		}
-		if !hasIntermediateData && config.Verbose {
-			fmt.Printf("警告: 无法计算 intermediate levels\n")
-		}
-	}
-
-	// 应用预处理 (黑电平校正、intermediate bias、scale 转换)
-	// 将 12-bit RAW 转换为 14-bit intermediate 数据
-	if err := processor.PreprocessData(x3fFile, rawSection, wb); err != nil && config.Verbose {
-		fmt.Printf("警告: 预处理失败: %v\n", err)
+	preprocessed, _, err := x3f.ProcessImageUnified(x3fFile, opts, logger)
+	if err != nil {
+		return err
 	}
 
 	// 获取相机信息
+	logger.Step("准备 DNG 元数据")
 	cameraModel := "Sigma X3F"
 	if model, ok := x3fFile.GetProperty("CAMMODEL"); ok {
 		cameraModel = model
@@ -322,11 +281,17 @@ func convertToDNG(x3fFile *x3f.File, config *Config) error {
 		cameraSerial = serial
 	}
 
+	// 获取白平衡
+	wb := config.WhiteBalance
+	if wb == "" {
+		wb = x3fFile.GetWhiteBalance()
+	}
+
 	// 获取色彩矩阵
 	colorMatrix, _ := x3fFile.GetColorMatrix(wb)
 
 	// 获取白平衡增益 (仅在 C 兼容模式下使用)
-	var whiteBalance [3]float64
+	var whiteBalance x3f.Vector3
 	if config.CompatibleWithC {
 		var ok bool
 		whiteBalance, ok = x3fFile.GetWhiteBalanceGain(wb)
@@ -339,6 +304,9 @@ func convertToDNG(x3fFile *x3f.File, config *Config) error {
 		}
 	}
 
+	// 获取 rawSection (需要用于 DNG 输出)
+	rawSection := x3fFile.ImageData[len(x3fFile.ImageData)-1]
+
 	dngOpts := output.DNGOptions{
 		CameraModel:         cameraModel,
 		CameraSerial:        cameraSerial,
@@ -348,115 +316,186 @@ func convertToDNG(x3fFile *x3f.File, config *Config) error {
 		LinearOutput:        true,
 		NoCrop:              config.NoCrop,
 		CompatibleWithC:     config.CompatibleWithC,
-		IntermediateBias:    intermediateBias,
-		MaxIntermediate:     maxIntermediate,
-		HasIntermediateData: hasIntermediateData,
+		IntermediateBias:    preprocessed.IntermediateBias,
+		MaxIntermediate:     preprocessed.MaxIntermediate,
+		HasIntermediateData: true,
+		PreprocessedData:    preprocessed.Data,
+		ImageWidth:          preprocessed.Width,
+		ImageHeight:         preprocessed.Height,
 	}
 
+	logger.Done(cameraModel)
+
+	logger.Step("写入 DNG")
 	if config.Verbose {
 		fmt.Printf("写入 DNG 文件: %s\n", config.Output)
 	}
 
-	return output.ExportRawDNG(x3fFile, rawSection, config.Output, dngOpts)
-}
-
-func convertToTIFF(x3fFile *x3f.File, config *Config) error {
-	if config.Verbose {
-		fmt.Println("转换为 TIFF...")
-	}
-
-	opts := processor.ProcessOptions{
-		WhiteBalance: config.WhiteBalance,
-		ColorSpace:   getColorSpace(config.ColorSpace),
-		ApplyGamma:   false, // TIFF 使用线性输出
-		ToneMapping:  false,
-		LinearOutput: true,
-		NoCrop:       config.NoCrop,
-	}
-
-	img, err := loadAndProcessImage(x3fFile, config, opts)
+	err = output.ExportRawDNG(x3fFile, rawSection, config.Output, dngOpts)
 	if err != nil {
 		return err
 	}
 
-	tiffOpts := output.TIFFOptions{
-		Use16Bit: true,
+	logger.Done("完成")
+
+	return nil
+}
+
+func convertToTIFF(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error {
+	if config.Verbose {
+		fmt.Println("转换为 TIFF...")
 	}
 
+	// 使用统一的图像处理流程
+	// TIFF 默认输出 sRGB（和 C 版本一致），应用 gamma 校正
+	opts := x3f.ProcessOptions{
+		WhiteBalance:      config.WhiteBalance,
+		ColorSpace:        getColorSpace(config.ColorSpace),
+		ApplyGamma:        true,                // 应用 gamma 校正（默认 sRGB）
+		ToneMappingMethod: x3f.ToneMappingNone, // TIFF 默认不使用色调映射
+		LinearOutput:      false,               // 输出 sRGB，不是线性
+		NoCrop:            config.NoCrop,
+		IntermediateOnly:  false, // TIFF 需要 RGB 数据
+	}
+
+	_, img, err := x3f.ProcessImageUnified(x3fFile, opts, logger)
+	if err != nil {
+		return err
+	}
+
+	// 从 X3F 文件中提取 EXIF 元数据
+	make := "SIGMA"
+	model := x3fFile.GetCameraModel()
+
+	aperture, _ := x3fFile.GetCAMFFloat("CaptureAperture")
+	shutter, _ := x3fFile.GetCAMFFloat("CaptureShutter")
+	iso, _ := x3fFile.GetCAMFFloat("CaptureISO")
+
+	// 快门速度是倒数形式（如 1740 表示 1/1740 秒）
+	exposureTime := 0.0
+	if shutter > 0 {
+		exposureTime = 1.0 / shutter
+	}
+
+	tiffOpts := output.TIFFOptions{
+		Use16Bit:     true,
+		Make:         make,
+		Model:        model,
+		LensModel:    "", // X3F 文件中没有镜头型号信息
+		FNumber:      aperture,
+		ExposureTime: exposureTime,
+		ISO:          uint16(iso),
+	}
+
+	logger.Step("写入 TIFF")
 	if config.Verbose {
 		fmt.Printf("写入 TIFF 文件: %s\n", config.Output)
 	}
 
-	return output.ExportTIFF(img, config.Output, tiffOpts)
+	err = output.ExportTIFF(img, config.Output, tiffOpts)
+	if err != nil {
+		return err
+	}
+
+	logger.Done("完成")
+
+	return nil
 }
 
-func convertToJPEG(x3fFile *x3f.File, config *Config) error {
+func convertToJPEG(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error {
 	if config.Verbose {
 		fmt.Println("转换为 JPEG...")
 	}
 
-	opts := processor.ProcessOptions{
-		WhiteBalance: config.WhiteBalance,
-		ColorSpace:   getColorSpace(config.ColorSpace),
-		ApplyGamma:   false, // JPEG 输出时手动应用
-		ToneMapping:  false, // JPEG 输出时手动应用
-		LinearOutput: false,
-		NoCrop:       config.NoCrop,
+	// 验证 JPEG 质量参数
+	quality := config.JPEGQuality
+	if quality < 1 || quality > 100 {
+		return fmt.Errorf("JPEG 质量必须在 1-100 之间，当前值: %d", quality)
 	}
 
-	img, err := loadAndProcessImage(x3fFile, config, opts)
+	// 使用统一的图像处理流程
+	// JPEG 在 x3f 包内完成所有 CPU 计算（并发），output 包只做 IO
+	opts := x3f.ProcessOptions{
+		WhiteBalance:      config.WhiteBalance,
+		ColorSpace:        getColorSpace(config.ColorSpace),
+		ApplyGamma:        true,                                     // 在 x3f 包内应用（并发）
+		ToneMappingMethod: getToneMappingMethod(config.ToneMapping), // 在 x3f 包内应用（并发）
+		LinearOutput:      false,
+		NoCrop:            config.NoCrop,
+		IntermediateOnly:  false, // JPEG 需要 RGB 数据
+	}
+
+	_, img, err := x3f.ProcessImageUnified(x3fFile, opts, logger)
 	if err != nil {
 		return err
 	}
 
 	jpegOpts := output.JPEGOptions{
-		Quality:     95,
-		ApplyGamma:  true,
-		ToneMapping: true,
+		Quality: quality,
+		// gamma 和色调映射已在 ProcessImageUnified 中完成
 	}
 
+	logger.Step("写入 JPEG")
 	if config.Verbose {
 		fmt.Printf("写入 JPEG 文件: %s\n", config.Output)
 	}
 
-	return output.ExportJPEG(img, config.Output, jpegOpts)
+	err = output.ExportJPEG(img, config.Output, jpegOpts)
+	if err != nil {
+		return err
+	}
+
+	logger.Done("完成")
+
+	return nil
 }
 
-func convertToHEIF(x3fFile *x3f.File, config *Config) error {
+func convertToHEIF(x3fFile *x3f.File, config *Config, logger *x3f.Logger) error {
 	if config.Verbose {
 		fmt.Println("转换为 HEIF...")
 	}
 
-	opts := processor.ProcessOptions{
-		WhiteBalance: config.WhiteBalance,
-		ColorSpace:   getColorSpace(config.ColorSpace),
-		ApplyGamma:   false,
-		ToneMapping:  false,
-		LinearOutput: false,
-		NoCrop:       config.NoCrop,
+	opts := x3f.ProcessOptions{
+		WhiteBalance:      config.WhiteBalance,
+		ColorSpace:        getColorSpace(config.ColorSpace),
+		ApplyGamma:        true,
+		ToneMappingMethod: getToneMappingMethod(config.ToneMapping),
+		LinearOutput:      false,
+		NoCrop:            config.NoCrop,
+		IntermediateOnly:  false,
 	}
 
-	img, err := loadAndProcessImage(x3fFile, config, opts)
+	_, img, err := x3f.ProcessImageUnified(x3fFile, opts, logger)
 	if err != nil {
 		return err
 	}
 
 	heifOpts := output.HEIFOptions{
-		Quality:     90,
-		ApplyGamma:  true,
-		ToneMapping: true,
-		Use10Bit:    true,
+		Quality:  98,
+		Use10Bit: true,
 	}
 
+	logger.Step("写入 HEIF")
 	if config.Verbose {
 		fmt.Printf("写入 HEIF 文件: %s\n", config.Output)
 	}
 
-	return output.ExportHEIF(img, config.Output, heifOpts)
+	err = output.ExportHEIF(img, config.Output, heifOpts)
+	if err != nil {
+		return err
+	}
+
+	logger.Done("完成")
+
+	return nil
 }
 
 func convertToPPM(x3fFile *x3f.File, config *Config) error {
-	if config.Unprocessed {
+	if config.Qtop {
+		if config.Verbose {
+			fmt.Println("转换为 PPM（Quattro top 层数据）...")
+		}
+	} else if config.Unprocessed {
 		if config.Verbose {
 			fmt.Println("转换为 PPM（未处理的 RAW 数据）...")
 		}
@@ -506,7 +545,10 @@ func convertToPPM(x3fFile *x3f.File, config *Config) error {
 		fmt.Printf("写入 PPM 文件: %s\n", config.Output)
 	}
 
-	if config.Unprocessed {
+	if config.Qtop {
+		// 导出 Quattro top 层数据
+		return output.ExportQtopPPM(rawSection, x3fFile, config.Output, config.NoCrop)
+	} else if config.Unprocessed {
 		// 导出未处理的 RAW 数据
 		return output.ExportRawPPM(rawSection, x3fFile, config.Output, config.NoCrop)
 	} else {

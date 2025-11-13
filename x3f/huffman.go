@@ -3,16 +3,7 @@ package x3f
 import (
 	"encoding/binary"
 	"fmt"
-	"os"
 )
-
-var debugEnabled = os.Getenv("DEBUG") != ""
-
-func debug(format string, args ...interface{}) {
-	if debugEnabled {
-		fmt.Printf(format+"\n", args...)
-	}
-}
 
 // HuffmanNode Huffman 树节点
 type HuffmanNode struct {
@@ -40,7 +31,7 @@ type BitState struct {
 	Bits      [8]uint8
 }
 
-// NewHuffmanTree 创建新的 Huffman 树
+// 创建新的 Huffman 树
 func NewHuffmanTree(bits int) *HuffmanTree {
 	leaves := 1 << bits
 	maxNodes := (2 * leaves) - 1
@@ -58,7 +49,7 @@ func NewHuffmanTree(bits int) *HuffmanTree {
 	return tree
 }
 
-// newNode 创建新节点
+// 创建新节点
 func (tree *HuffmanTree) newNode() *HuffmanNode {
 	if tree.FreeNodeIndex >= len(tree.Nodes) {
 		return nil
@@ -73,7 +64,7 @@ func (tree *HuffmanTree) newNode() *HuffmanNode {
 	return node
 }
 
-// AddCodeToTree 将编码添加到树
+// 将编码添加到树
 func (tree *HuffmanTree) AddCodeToTree(length int, code uint32, value uint32) {
 	if tree.FreeNodeIndex == 0 {
 		tree.newNode() // 创建根节点
@@ -99,7 +90,7 @@ func (tree *HuffmanTree) AddCodeToTree(length int, code uint32, value uint32) {
 	node.Leaf = value
 }
 
-// PopulateTRUEHuffmanTree 填充 TRUE 引擎 Huffman 树
+// 填充 TRUE 引擎 Huffman 树
 func PopulateTRUEHuffmanTree(tree *HuffmanTree, table []TRUEHuffmanElement) {
 	tree.newNode() // 创建根节点
 
@@ -116,7 +107,7 @@ func PopulateTRUEHuffmanTree(tree *HuffmanTree, table []TRUEHuffmanElement) {
 	}
 }
 
-// PopulateHuffmanTree 填充传统 Huffman 树
+// 填充传统 Huffman 树
 func PopulateHuffmanTree(tree *HuffmanTree, table []uint32, mapping []uint16) {
 	tree.newNode() // 创建根节点
 
@@ -137,14 +128,14 @@ func PopulateHuffmanTree(tree *HuffmanTree, table []uint32, mapping []uint16) {
 	}
 }
 
-// SetBitState 设置位状态
+// 设置位状态
 func SetBitState(bs *BitState, data []byte) {
 	bs.Data = data
 	bs.BytePos = 0
 	bs.BitOffset = 8
 }
 
-// GetBit 读取一位
+// 读取一位
 func GetBit(bs *BitState) uint8 {
 	if bs.BitOffset == 8 {
 		if bs.BytePos >= len(bs.Data) {
@@ -168,7 +159,7 @@ func GetBit(bs *BitState) uint8 {
 	return bit
 }
 
-// GetHuffmanDiff 使用 Huffman 树解码差值
+// 使用 Huffman 树解码差值
 func GetHuffmanDiff(bs *BitState, tree *HuffmanTree) int32 {
 	node := &tree.Nodes[0]
 
@@ -184,7 +175,7 @@ func GetHuffmanDiff(bs *BitState, tree *HuffmanTree) int32 {
 	return int32(node.Leaf)
 }
 
-// GetTRUEDiff 使用 TRUE 算法解码差值
+// 使用 TRUE 算法解码差值
 func GetTRUEDiff(bs *BitState, tree *HuffmanTree) int32 {
 	node := &tree.Nodes[0]
 
@@ -217,7 +208,7 @@ func GetTRUEDiff(bs *BitState, tree *HuffmanTree) int32 {
 	return diff
 }
 
-// HuffmanDecodeRow 解码一行 Huffman 数据
+// 解码一行 Huffman 数据
 func HuffmanDecodeRow(data []byte, rowOffset uint32, columns int, tree *HuffmanTree, offset int16) []uint16 {
 	result := make([]uint16, columns*3)
 
@@ -245,7 +236,7 @@ func HuffmanDecodeRow(data []byte, rowOffset uint32, columns int, tree *HuffmanT
 	return result
 }
 
-// TRUEDecodeOneColor 使用 TRUE 算法解码一个颜色平面
+// 使用 TRUE 算法解码一个颜色平面
 func TRUEDecodeOneColor(data []byte, rows, columns int, tree *HuffmanTree, seed uint32) []uint16 {
 	result := make([]uint16, rows*columns)
 
@@ -325,14 +316,17 @@ type ImageSection struct {
 	TRUESeeds      [3]uint16
 
 	// Quattro 专用数据
-	QuattroPlanes [3]QuattroPlane
-	QuattroLayout int // 0=binned, 1=normal
+	QuattroPlanes  [3]QuattroPlane
+	QuattroLayout  int      // 0=binned, 1=normal
+	QuattroTopData []uint16 // Quattro top 层数据（单独存储）
+	QuattroTopRows int      // top 层行数
+	QuattroTopCols int      // top 层列数
 
 	// 解码后的数据
 	DecodedData []uint16
 }
 
-// LoadImageSection 加载图像段
+// 加载图像段
 func (f *File) LoadImageSection(entry *DirectoryEntry) error {
 	// 对于 version >= 4.0，entry.Type 直接是 IMA2/IMAG
 	// 对于 version < 4.0，entry.Type 是 SECi
@@ -420,7 +414,7 @@ func (f *File) LoadImageSection(entry *DirectoryEntry) error {
 	return nil
 }
 
-// loadHuffmanImage 加载传统 Huffman 图像
+// 加载传统 Huffman 图像
 func loadHuffmanImage(section *ImageSection, data []byte) error {
 	offset := 0
 
@@ -456,47 +450,41 @@ func loadHuffmanImage(section *ImageSection, data []byte) error {
 	return nil
 }
 
-// loadTRUEImage 加载 TRUE 引擎图像
-func loadTRUEImage(section *ImageSection, data []byte) error {
-	offset := 0
-
-	// 检测是否为 Quattro 格式
-	isQuattro := (section.Type&0xFF == 0x23 || section.Format&0xFF == 0x23)
-
-	debug("loadTRUEImage: isQuattro=%v, dataLen=%d", isQuattro, len(data))
-
-	// 对于 Quattro，先读取平面尺寸信息
-	if isQuattro {
-		if len(data) < 12 {
-			return fmt.Errorf("Quattro 数据太短")
-		}
-
-		// 读取 3 个平面的尺寸 (uint16 columns, uint16 rows) x 3
-		for i := 0; i < 3; i++ {
-			section.QuattroPlanes[i].Columns = binary.LittleEndian.Uint16(data[offset : offset+2])
-			section.QuattroPlanes[i].Rows = binary.LittleEndian.Uint16(data[offset+2 : offset+4])
-			offset += 4
-		}
-
-		debug("  Quattro planes: [(%d,%d), (%d,%d), (%d,%d)], offset=%d",
-			section.QuattroPlanes[0].Columns, section.QuattroPlanes[0].Rows,
-			section.QuattroPlanes[1].Columns, section.QuattroPlanes[1].Rows,
-			section.QuattroPlanes[2].Columns, section.QuattroPlanes[2].Rows, offset)
-
-		// 判断 Quattro 布局
-		if section.QuattroPlanes[0].Rows == uint16(section.Rows/2) {
-			section.QuattroLayout = 1 // Quattro layout
-		} else if section.QuattroPlanes[0].Rows == uint16(section.Rows) {
-			section.QuattroLayout = 0 // Binned Quattro
-		} else {
-			return fmt.Errorf("未知的 Quattro 层大小: plane[0].rows=%d, image.rows=%d",
-				section.QuattroPlanes[0].Rows, section.Rows)
-		}
+// 加载 TRUE 引擎图像
+// 加载 Quattro 平面信息
+func loadQuattroPlanes(section *ImageSection, data []byte, offset int) (int, error) {
+	if len(data) < offset+12 {
+		return offset, fmt.Errorf("Quattro 数据太短")
 	}
 
-	// 读取 TRUE 种子
+	for i := 0; i < 3; i++ {
+		section.QuattroPlanes[i].Columns = binary.LittleEndian.Uint16(data[offset : offset+2])
+		section.QuattroPlanes[i].Rows = binary.LittleEndian.Uint16(data[offset+2 : offset+4])
+		offset += 4
+	}
+
+	debug("  Quattro planes: [(%d,%d), (%d,%d), (%d,%d)], offset=%d",
+		section.QuattroPlanes[0].Columns, section.QuattroPlanes[0].Rows,
+		section.QuattroPlanes[1].Columns, section.QuattroPlanes[1].Rows,
+		section.QuattroPlanes[2].Columns, section.QuattroPlanes[2].Rows, offset)
+
+	// 判断 Quattro 布局
+	if section.QuattroPlanes[0].Rows == uint16(section.Rows/2) {
+		section.QuattroLayout = 1 // Quattro layout
+	} else if section.QuattroPlanes[0].Rows == uint16(section.Rows) {
+		section.QuattroLayout = 0 // Binned Quattro
+	} else {
+		return offset, fmt.Errorf("未知的 Quattro 层大小: plane[0].rows=%d, image.rows=%d",
+			section.QuattroPlanes[0].Rows, section.Rows)
+	}
+
+	return offset, nil
+}
+
+// 加载 TRUE 种子
+func loadTRUESeeds(section *ImageSection, data []byte, offset int) (int, error) {
 	if len(data) < offset+8 {
-		return fmt.Errorf("数据太短，无法读取 TRUE seeds")
+		return offset, fmt.Errorf("数据太短，无法读取 TRUE seeds")
 	}
 
 	for i := 0; i < 3; i++ {
@@ -505,16 +493,21 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 			i, offset, offset+2, data[offset], data[offset+1], section.TRUESeeds[i])
 		offset += 2
 	}
-	// 跳过 unknown (uint16)
-	offset += 2
+	offset += 2 // 跳过 unknown (uint16)
+
 	debug("TRUE seeds: [%d, %d, %d], offset=%d",
 		section.TRUESeeds[0], section.TRUESeeds[1], section.TRUESeeds[2], offset)
 
-	// 读取 TRUE Huffman 表（变长，直到 CodeSize == 0）
+	return offset, nil
+}
+
+// 加载 TRUE Huffman 表
+func loadTRUEHuffmanTable(section *ImageSection, data []byte, offset int) (int, error) {
 	section.TRUETable = make([]TRUEHuffmanElement, 0, 256)
+
 	for {
 		if len(data) < offset+2 {
-			return fmt.Errorf("数据太短，无法读取 Huffman 表")
+			return offset, fmt.Errorf("数据太短，无法读取 Huffman 表")
 		}
 
 		element := TRUEHuffmanElement{
@@ -524,25 +517,19 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 		section.TRUETable = append(section.TRUETable, element)
 		offset += 2
 
-		// 遇到 CodeSize == 0 时停止
 		if element.CodeSize == 0 {
 			break
 		}
 	}
+
 	debug("  Huffman table: %d elements, offset=%d", len(section.TRUETable), offset)
+	return offset, nil
+}
 
-	// 对于 Quattro，有额外的 uint32 unknown
-	if isQuattro {
-		if len(data) < offset+4 {
-			return fmt.Errorf("数据太短，无法读取 Quattro unknown")
-		}
-		offset += 4 // 跳过 Quattro unknown
-		debug("  Quattro unknown skipped, offset=%d", offset)
-	}
-
-	// 读取平面大小
+// 加载 TRUE 平面大小
+func loadTRUEPlaneSizes(section *ImageSection, data []byte, offset int) (int, error) {
 	if len(data) < offset+12 {
-		return fmt.Errorf("数据太短，无法读取平面大小")
+		return offset, fmt.Errorf("数据太短，无法读取平面大小")
 	}
 
 	section.TRUEPlaneSizes = make([]uint32, 3)
@@ -554,6 +541,47 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 	debug("  Plane sizes: [%d, %d, %d], data len=%d",
 		section.TRUEPlaneSizes[0], section.TRUEPlaneSizes[1], section.TRUEPlaneSizes[2], len(data))
 
+	return offset, nil
+}
+
+func loadTRUEImage(section *ImageSection, data []byte) error {
+	offset := 0
+	isQuattro := (section.Type&0xFF == FormatTypeQuattro || section.Format&0xFF == FormatTypeQuattro)
+
+	debug("loadTRUEImage: isQuattro=%v, dataLen=%d", isQuattro, len(data))
+
+	var err error
+	if isQuattro {
+		offset, err = loadQuattroPlanes(section, data, offset)
+		if err != nil {
+			return err
+		}
+	}
+
+	offset, err = loadTRUESeeds(section, data, offset)
+	if err != nil {
+		return err
+	}
+
+	offset, err = loadTRUEHuffmanTable(section, data, offset)
+	if err != nil {
+		return err
+	}
+
+	// 对于 Quattro，有额外的 uint32 unknown
+	if isQuattro {
+		if len(data) < offset+4 {
+			return fmt.Errorf("数据太短，无法读取 Quattro unknown")
+		}
+		offset += 4
+		debug("  Quattro unknown skipped, offset=%d", offset)
+	}
+
+	offset, err = loadTRUEPlaneSizes(section, data, offset)
+	if err != nil {
+		return err
+	}
+
 	// 构建 Huffman 树
 	section.HuffmanTree = NewHuffmanTree(8)
 	PopulateTRUEHuffmanTree(section.HuffmanTree, section.TRUETable)
@@ -564,7 +592,7 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 	return nil
 }
 
-// DecodeImage 解码图像数据
+// 解码图像数据
 func (section *ImageSection) DecodeImage() error {
 	// 对于 Quattro 文件，使用 Type 字段判断格式
 	formatID := section.Format
@@ -584,7 +612,7 @@ func (section *ImageSection) DecodeImage() error {
 	}
 }
 
-// decodeHuffmanImage 解码传统 Huffman 图像
+// 解码传统 Huffman 图像
 func (section *ImageSection) decodeHuffmanImage() error {
 	totalPixels := int(section.Rows * section.Columns * 3)
 	section.DecodedData = make([]uint16, totalPixels)
@@ -609,22 +637,24 @@ func (section *ImageSection) decodeHuffmanImage() error {
 	return nil
 }
 
-// decodeTRUEImage 解码 TRUE 引擎图像
+// 解码 TRUE 引擎图像
 func (section *ImageSection) decodeTRUEImage() error {
 	// 检查是否是 Quattro 格式
-	isQuattro := (section.Type&0xFF == 0x23 || section.Format&0xFF == 0x23)
+	isQuattro := (section.Type&0xFF == FormatTypeQuattro || section.Format&0xFF == FormatTypeQuattro)
 	isQuattroLayout := isQuattro && section.QuattroLayout == 1
 
 	debug("decodeTRUEImage: size=%dx%d, isQuattro=%v, layout=%d",
 		section.Columns, section.Rows, isQuattro, section.QuattroLayout)
 
-	// 对于 Quattro 1:1:4，主图像使用 plane[0] 的尺寸
+	// 对于 Quattro 1:1:4，主图像使用 bottom/middle 层的低分辨率（与 C 版本一致）
 	var mainRows, mainCols int
 	if isQuattroLayout {
+		// 使用 bottom/middle 层的低分辨率
 		mainRows = int(section.QuattroPlanes[0].Rows)
 		mainCols = int(section.QuattroPlanes[0].Columns)
-		debug("  Quattro 1:1:4 layout: main=%dx%d, top=%dx%d",
+		debug("  Quattro 1:1:4 layout: main(low-res)=%dx%d, bottom/middle=%dx%d, top_plane=%dx%d",
 			mainCols, mainRows,
+			section.QuattroPlanes[0].Columns, section.QuattroPlanes[0].Rows,
 			section.QuattroPlanes[2].Columns, section.QuattroPlanes[2].Rows)
 	} else {
 		mainRows = int(section.Rows)
@@ -659,7 +689,8 @@ func (section *ImageSection) decodeTRUEImage() error {
 
 	// 解码三个颜色平面
 	dataOffset := 0
-	var topLayerData []uint16 // Quattro top layer (蓝色层)
+	var bottomLayerData, middleLayerData, topLayerData []uint16
+	var topLayerRows, topLayerCols int
 
 	for color := 0; color < 3; color++ {
 		planeSize := int(section.TRUEPlaneSizes[color])
@@ -688,11 +719,20 @@ func (section *ImageSection) decodeTRUEImage() error {
 			uint32(section.TRUESeeds[color]),
 		)
 
-		if isQuattroLayout && color == 2 {
-			// Quattro: 保存 top layer 用于后续下采样
+		if isQuattroLayout && color < 2 {
+			// Quattro bottom/middle layers: 直接交错存储（不上采样）
+			if color == 0 {
+				bottomLayerData = colorData
+			} else {
+				middleLayerData = colorData
+			}
+		} else if isQuattroLayout && color == 2 {
+			// Quattro top layer: 单独保存，不存储到 DecodedData
 			topLayerData = colorData
+			topLayerRows = planeRows
+			topLayerCols = planeCols
 		} else {
-			// 交错存储 R 和 G（或标准格式的 R/G/B）
+			// 标准格式（Merrill/Classic）：直接交错存储
 			for i := 0; i < len(colorData); i++ {
 				section.DecodedData[i*3+color] = colorData[i]
 			}
@@ -703,30 +743,21 @@ func (section *ImageSection) decodeTRUEImage() error {
 		dataOffset += alignedSize
 	}
 
-	// Quattro: 下采样 top layer 到蓝色通道
-	if isQuattroLayout && topLayerData != nil {
-		debug("  Downsampling Quattro top layer to blue channel")
-		topRows := int(section.QuattroPlanes[2].Rows)
-		topCols := int(section.QuattroPlanes[2].Columns)
-
-		for row := 0; row < mainRows; row++ {
-			for col := 0; col < mainCols; col++ {
-				// 2×2 平均下采样
-				srcRow1 := row * 2
-				srcRow2 := row*2 + 1
-				srcCol1 := col * 2
-				srcCol2 := col*2 + 1
-
-				// 确保不越界
-				if srcRow2 < topRows && srcCol2 < topCols {
-					sum := uint32(topLayerData[srcRow1*topCols+srcCol1]) +
-						uint32(topLayerData[srcRow1*topCols+srcCol2]) +
-						uint32(topLayerData[srcRow2*topCols+srcCol1]) +
-						uint32(topLayerData[srcRow2*topCols+srcCol2])
-					section.DecodedData[(row*mainCols+col)*3+2] = uint16(sum / 4)
-				}
-			}
+	// Quattro: 交错存储 bottom/middle layers（低分辨率），与 C 版本一致
+	if isQuattroLayout && bottomLayerData != nil && middleLayerData != nil {
+		debug("  Storing Quattro bottom/middle layers (low-res, no upsampling)")
+		for i := 0; i < len(bottomLayerData); i++ {
+			section.DecodedData[i*3+0] = bottomLayerData[i]
+			section.DecodedData[i*3+1] = middleLayerData[i]
+			// top 层数据暂时不存储到 DecodedData（保持与 C 版本 x3rgb16 一致）
+			section.DecodedData[i*3+2] = 0
 		}
+
+		// 保存 top 层数据供后续处理使用
+		section.QuattroTopData = topLayerData
+		section.QuattroTopRows = topLayerRows
+		section.QuattroTopCols = topLayerCols
+		debug("  Top layer saved separately: %dx%d", topLayerCols, topLayerRows)
 	}
 
 	return nil

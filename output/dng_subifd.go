@@ -33,7 +33,7 @@ type stripInfo struct {
 	stripOffsets    []uint32
 }
 
-// writeSubIFD 写入 SubIFD (包含完整分辨率 RAW 数据)
+// 写入 SubIFD (包含完整分辨率 RAW 数据)
 func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	targetWidth, targetHeight uint32,
 	activeAreaTop, activeAreaLeft, activeAreaBottom, activeAreaRight uint32,
@@ -54,7 +54,7 @@ func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	return subIFDOffset, nil
 }
 
-// recordSubIFDOffset 记录 SubIFD 起始位置
+// 记录 SubIFD 起始位置
 func recordSubIFDOffset(file *os.File) uint32 {
 	offset, err := file.Seek(0, io.SeekCurrent)
 	if err != nil {
@@ -63,7 +63,7 @@ func recordSubIFDOffset(file *os.File) uint32 {
 	return uint32(offset)
 }
 
-// calculateStripInfo 计算条带信息
+// 计算条带信息
 func calculateStripInfo(targetWidth, targetHeight uint32) stripInfo {
 	rowsPerStrip := uint32(32)
 	numStrips := (targetHeight + rowsPerStrip - 1) / rowsPerStrip
@@ -83,7 +83,7 @@ func calculateStripInfo(targetWidth, targetHeight uint32) stripInfo {
 	}
 }
 
-// calculateRowsInStrip 计算条带中的行数
+// 计算条带中的行数
 func calculateRowsInStrip(stripIndex, rowsPerStrip, targetHeight uint32) uint32 {
 	if (stripIndex+1)*rowsPerStrip > targetHeight {
 		return targetHeight - stripIndex*rowsPerStrip
@@ -91,12 +91,12 @@ func calculateRowsInStrip(stripIndex, rowsPerStrip, targetHeight uint32) uint32 
 	return rowsPerStrip
 }
 
-// createSubIFD 创建 SubIFD 写入器
+// 创建 SubIFD 写入器
 func createSubIFD(file *os.File) *IFDWriter {
 	return NewIFDWriter(file)
 }
 
-// addBasicTags 添加基础标签
+// 添加基础标签
 func addBasicTags(subIFD *IFDWriter, targetWidth, targetHeight uint32, strips stripInfo) {
 	subIFD.AddLong(TagNewSubfileType, 0)
 	subIFD.AddLong(TagImageWidth, targetWidth)
@@ -114,7 +114,7 @@ func addBasicTags(subIFD *IFDWriter, targetWidth, targetHeight uint32, strips st
 	subIFD.AddShort(TagPlanarConfiguration, 1)
 }
 
-// addImageLevelTags 添加图像电平标签
+// 添加图像电平标签
 func addImageLevelTags(subIFD *IFDWriter, levels x3f.ImageLevels) {
 	subIFD.AddRationalFromFloat(TagChromaBlurRadius, 0.0, false)
 
@@ -123,8 +123,8 @@ func addImageLevelTags(subIFD *IFDWriter, levels x3f.ImageLevels) {
 	subIFD.AddLongArray(TagWhiteLevel, levels.White[:])
 }
 
-// convertBlackLevelToRationals 将 BlackLevel 转换为有理数
-func convertBlackLevelToRationals(blackLevel [3]float64) [][2]uint32 {
+// 将 BlackLevel 转换为有理数
+func convertBlackLevelToRationals(blackLevel x3f.Vector3) [][2]uint32 {
 	rationals := make([][2]uint32, 3)
 	for i := 0; i < 3; i++ {
 		num := uint32(blackLevel[i] * float64(DNG_BLACK_LEVEL_DENOMINATOR))
@@ -133,19 +133,19 @@ func convertBlackLevelToRationals(blackLevel [3]float64) [][2]uint32 {
 	return rationals
 }
 
-// addActiveAreaTag 添加 ActiveArea 标签
+// 添加 ActiveArea 标签
 func addActiveAreaTag(subIFD *IFDWriter, top, left, bottom, right uint32) {
 	subIFD.AddLongArray(TagActiveArea, []uint32{top, left, bottom, right})
 }
 
-// addOpcodeList2Tag 添加 OpcodeList2 标签
+// 添加 OpcodeList2 标签
 func addOpcodeList2Tag(subIFD *IFDWriter, opcodeList2Data []byte) {
 	if opcodeList2Data != nil {
 		subIFD.AddUndefined(TagOpcodeList2, opcodeList2Data)
 	}
 }
 
-// updateStripOffsets 更新条带偏移量
+// 更新条带偏移量
 func updateStripOffsets(subIFD *IFDWriter, strips stripInfo) {
 	ifdEndPos := subIFD.GetCurrentPosition()
 	stripOffsets := calculateStripOffsets(ifdEndPos, strips)
@@ -163,7 +163,7 @@ func updateStripOffsets(subIFD *IFDWriter, strips stripInfo) {
 	strips.stripOffsets = stripOffsets
 }
 
-// calculateStripOffsets 计算条带偏移量
+// 计算条带偏移量
 func calculateStripOffsets(ifdEndPos int64, strips stripInfo) []uint32 {
 	offsets := make([]uint32, strips.numStrips)
 	currentOffset := uint32(ifdEndPos)
@@ -176,7 +176,7 @@ func calculateStripOffsets(ifdEndPos int64, strips stripInfo) []uint32 {
 	return offsets
 }
 
-// writeSubIFDAndImageData 写入 SubIFD 和图像数据
+// 写入 SubIFD 和图像数据
 func writeSubIFDAndImageData(subIFD *IFDWriter, file *os.File, imageData []byte) {
 	if _, err := subIFD.Write(); err != nil {
 		panic(err)

@@ -60,8 +60,8 @@ const (
 	CameraIDDP1Q uint32 = 80
 	CameraIDDP2Q uint32 = 81
 	CameraIDDP3Q uint32 = 82
-	CameraIDSDQ  uint32 = 40
-	CameraIDSDQH uint32 = 41
+	CameraIDSDQ  uint32 = 0x0F // 15 - Sigma dp Quattro
+	CameraIDSDQH uint32 = 0x10 // 16 - Sigma dp Quattro H
 )
 
 // Header sizes
@@ -75,6 +75,13 @@ const (
 	NumExtData21           = 32
 	NumExtData30           = 64
 	NumExtData             = NumExtData30
+)
+
+// Image format type masks
+const (
+	FormatTypeQuattro uint32 = 0x23 // Quattro format identifier
+	FormatTypeTRUE    uint32 = 0x1E // TRUE format identifier
+	FormatTypeJPEG    uint32 = 0x02 // JPEG format identifier
 )
 
 // Huffman tree constants

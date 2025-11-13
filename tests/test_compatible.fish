@@ -1,6 +1,4 @@
 #!/usr/bin/env fish
-# X3F to DNG 转换对比脚本
-# 使用方法: ./compare_dng.fish <x3f文件路径> [输出目录]
 
 set input_file $argv[1]
 
@@ -42,12 +40,12 @@ echo ""
 # 1. 生成 C 版本 DNG
 # ========================================
 echo "📦 步骤 1/5: 使用 C 版本生成 DNG..."
-set c_bin "../bin/osx-universal/x3f_extract"
+set c_bin "../bin/c-osx-universal/x3f_extract"
 
 if not test -f $c_bin
     set c_bin "../bin/osx-arm64/x3f_extract"
     if not test -f $c_bin
-        set c_bin "./bin/osx-universal/x3f_extract"
+        set c_bin "./bin/c-osx-universal/x3f_extract"
         if not test -f $c_bin
             echo "❌ 错误: 找不到 C 版本可执行文件"
             exit 1

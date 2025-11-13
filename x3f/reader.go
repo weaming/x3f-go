@@ -11,7 +11,7 @@ import (
 
 var le = binary.LittleEndian
 
-// Open opens an X3F file for reading
+// opens an X3F file for reading
 func Open(filename string) (*File, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -42,7 +42,7 @@ func Open(filename string) (*File, error) {
 	return x3f, nil
 }
 
-// Close closes the X3F file
+// closes the X3F file
 func (f *File) Close() error {
 	if closer, ok := f.reader.(io.Closer); ok {
 		return closer.Close()
@@ -50,7 +50,7 @@ func (f *File) Close() error {
 	return nil
 }
 
-// readHeader reads the X3F file header
+// reads the X3F file header
 func (f *File) readHeader() error {
 	buf := make([]byte, 4+4+16+4+4+4+4+32+32+64*4+64*4)
 	if _, err := f.reader.ReadAt(buf, 0); err != nil {
@@ -120,7 +120,7 @@ func (f *File) readHeader() error {
 	return nil
 }
 
-// readDirectory reads the directory section from the end of file
+// reads the directory section from the end of file
 func (f *File) readDirectory() error {
 	buf := make([]byte, 4)
 	if _, err := f.reader.ReadAt(buf, f.size-4); err != nil {
@@ -163,7 +163,7 @@ func (f *File) readDirectory() error {
 	return nil
 }
 
-// LoadSection loads a specific section by type
+// loads a specific section by type
 func (f *File) LoadSection(sectionType uint32) error {
 	for i := range f.Directory.Entries {
 		entry := &f.Directory.Entries[i]
@@ -185,7 +185,7 @@ func (f *File) LoadSection(sectionType uint32) error {
 	return fmt.Errorf("section type 0x%08x not found", sectionType)
 }
 
-// loadSectionData loads data for a directory entry
+// loads data for a directory entry
 func (f *File) loadSectionData(entry *DirectoryEntry) error {
 	switch entry.Type {
 	case SECp:
@@ -199,7 +199,7 @@ func (f *File) loadSectionData(entry *DirectoryEntry) error {
 	}
 }
 
-// loadPropertySection loads the property section
+// loads the property section
 func (f *File) loadPropertySection(entry *DirectoryEntry) error {
 	buf := make([]byte, entry.Length)
 	if _, err := f.reader.ReadAt(buf, int64(entry.Offset)); err != nil {
@@ -302,7 +302,7 @@ func (f *File) loadPropertySection(entry *DirectoryEntry) error {
 	return nil
 }
 
-// GetProperty returns the value of a property by name
+// returns the value of a property by name
 func (f *File) GetProperty(name string) (string, bool) {
 	if f.Properties == nil {
 		return "", false

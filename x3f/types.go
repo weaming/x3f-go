@@ -85,7 +85,7 @@ type Area16 struct {
 
 // ImageLevels represents black and white levels for image
 type ImageLevels struct {
-	Black [3]float64
+	Black Vector3
 	White [3]uint32
 }
 

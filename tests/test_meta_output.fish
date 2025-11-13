@@ -5,11 +5,11 @@
 set SCRIPT_DIR (dirname (status -f))
 cd $SCRIPT_DIR
 
-set C_EXTRACT ../bin/osx-universal/x3f_extract
+set C_EXTRACT ../bin/c-osx-universal/x3f_extract
 set GO_EXTRACT ../build/x3f-go
 set RAW_DIR ../raw
 
-set test_files dp2m01.x3f dp2m02.x3f sd15_01.x3f sd15_02.x3f
+set test_files dp2m01.x3f dp2m02.x3f sd15_01.x3f sd15_02.x3f DP3Q0109.X3F
 
 echo "=== X3F Meta 输出对比测试 ==="
 echo ""

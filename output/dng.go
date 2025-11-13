@@ -9,15 +9,10 @@ import (
 	"sort"
 	"unsafe"
 
-	"github.com/weaming/x3f-go/matrix"
 	"github.com/weaming/x3f-go/x3f"
 )
 
-func debug(format string, args ...interface{}) {
-	if os.Getenv("DEBUG") != "" {
-		debug(""+format+"", args...)
-	}
-}
+var debug = x3f.Debug
 
 // DNG 特定标签常量 (标准 TIFF 标签在 tiff.go 中定义)
 const (
@@ -85,16 +80,16 @@ const (
 // Camera Profile 类型
 type CameraProfile struct {
 	Name          string
-	GrayscaleMix  *[3]float64 // nil 表示不是灰度模式
-	UseSRGBMatrix bool        // true 使用 sRGB 标准矩阵，false 使用相机特定矩阵
+	GrayscaleMix  *x3f.Vector3 // nil 表示不是灰度模式
+	UseSRGBMatrix bool         // true 使用 sRGB 标准矩阵，false 使用相机特定矩阵
 }
 
 // 预定义的 Camera Profiles（匹配 C 版本）
 var DefaultCameraProfiles = []CameraProfile{
 	{"Default", nil, false}, // 使用相机 CAMF ColorCorrections
-	{"Grayscale", &[3]float64{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}, false},
-	{"Grayscale (red filter)", &[3]float64{2.0, -1.0, 0.0}, false},
-	{"Grayscale (blue filter)", &[3]float64{0.0, -1.0, 2.0}, false},
+	{"Grayscale", &x3f.Vector3{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}, false},
+	{"Grayscale (red filter)", &x3f.Vector3{2.0, -1.0, 0.0}, false},
+	{"Grayscale (blue filter)", &x3f.Vector3{0.0, -1.0, 2.0}, false},
 	{"Unconverted", nil, true}, // 使用 sRGB 标准矩阵
 	{"Linear sRGB", nil, true},
 }
@@ -103,24 +98,27 @@ var DefaultCameraProfiles = []CameraProfile{
 type DNGOptions struct {
 	CameraModel         string
 	CameraSerial        string
-	ColorMatrix         []float64 // 3x3 矩阵
-	WhiteBalance        [3]float64
+	ColorMatrix         x3f.Matrix3x3
+	WhiteBalance        x3f.Vector3
 	BaselineExpose      float64
 	LinearOutput        bool
 	NoCrop              bool
 	CompatibleWithC     bool // 生成与 C 版本完全相同的输出（不裁剪，输出完整图像，不应用白平衡增益）
 	IntermediateBias    float64
 	MaxIntermediate     [3]uint32
-	HasIntermediateData bool // true 表示已经预处理为 intermediate 数据
+	HasIntermediateData bool     // true 表示已经预处理为 intermediate 数据
+	PreprocessedData    []uint16 // 预处理后的数据（如果 HasIntermediateData=true）
+	ImageWidth          uint32   // 预处理后的图像宽度（如果 HasIntermediateData=true）
+	ImageHeight         uint32   // 预处理后的图像高度（如果 HasIntermediateData=true）
 }
 
 // writeCameraProfileIFD 为单个 camera profile 生成 Big Endian IFD 数据
 // 返回完整的 TIFF IFD 结构（不包含 magic bytes）
 func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) ([]byte, error) {
 	// 计算 ColorMatrix1 和 ForwardMatrix1
-	colorMatrix1 := x3f.GetColorMatrix1ForDNG()
+	colorMatrix1 := x3f.GetColorMatrix1()
 
-	var forwardMatrix1 []float64
+	var forwardMatrix1 x3f.Matrix3x3
 
 	if profile.GrayscaleMix != nil {
 		// Grayscale profile: 使用 grayscale_mix 计算
@@ -131,7 +129,7 @@ func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) 
 	} else {
 		// Default profile: 使用 CAMF ColorCorrections
 		var ok bool
-		forwardMatrix1, ok = x3fFile.GetForwardMatrix1ForDNG(wb)
+		forwardMatrix1, ok = x3fFile.GetForwardMatrix1(wb)
 		if !ok {
 			return nil, fmt.Errorf("无法获取 ForwardMatrix1: 白平衡 '%s' 的 ColorCorrections 数据读取失败", wb)
 		}
@@ -159,16 +157,15 @@ func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) 
 	// 计算初始偏移：magic(4) + offset(4) + count(2) + entries(12*5) + next(4)
 	extraDataOffset := uint32(8 + 2 + 12*5 + 4)
 
-	// Helper: 添加 Rational 数组
-	addRationalArray := func(tag uint16, values []float64, signed bool) {
-		count := uint32(len(values))
+	// Helper: 添加 Matrix3x3
+	addMatrix := func(tag uint16, matrix x3f.Matrix3x3, signed bool) {
+		count := uint32(9)
 		offset := extraDataOffset
 
-		// 使用与 IFDWriter 相同的最大分母，确保精度一致
 		const maxDenom = 67108864 // 2^26
 
-		for _, v := range values {
-			num, denom := floatToRational(v, maxDenom)
+		for i := 0; i < 9; i++ {
+			num, denom := floatToRational(matrix[i], maxDenom)
 			if signed {
 				binary.Write(extraData, binary.BigEndian, int32(num))
 				binary.Write(extraData, binary.BigEndian, int32(denom))
@@ -219,8 +216,8 @@ func writeCameraProfileIFD(x3fFile *x3f.File, wb string, profile CameraProfile) 
 
 	// 添加 tags (按照 tag ID 排序)
 	addLong(TagCompression, 1) // Uncompressed
-	addRationalArray(TagColorMatrix1, colorMatrix1, true)
-	addRationalArray(TagForwardMatrix1, forwardMatrix1, true)
+	addMatrix(TagColorMatrix1, colorMatrix1, true)
+	addMatrix(TagForwardMatrix1, forwardMatrix1, true)
 	addASCII(TagProfileName, profile.Name)
 	addLong(TagDefaultBlackRender, 1) // None
 
@@ -290,7 +287,7 @@ func writeExtraCameraProfiles(file *os.File, x3fFile *x3f.File, wb string, profi
 	return offsets, nil
 }
 
-// floatToRational 使用连分数算法将浮点数转换为有理数
+// 使用连分数算法将浮点数转换为有理数
 func floatToRational(value float64, maxDenom int64) (num int64, denom int64) {
 	if value == 0 {
 		return 0, 1
@@ -327,7 +324,7 @@ func floatToRational(value float64, maxDenom int64) (num int64, denom int64) {
 	return sign * n1, d1
 }
 
-// buildOpcodeList2 构建 Opcode List 2 数据（Spatial Gain Maps）
+// 构建 Opcode List 2 数据（Spatial Gain Maps）
 func buildOpcodeList2(spatialGains []x3f.SpatialGainCorr, activeArea []uint32, imageRows, imageCols uint32) []byte {
 	if len(spatialGains) == 0 || len(activeArea) != 4 {
 		return nil
@@ -416,17 +413,17 @@ func buildOpcodeList2(spatialGains []x3f.SpatialGainCorr, activeArea []uint32, i
 	return buf
 }
 
-// floatToBits32 将 float32 转换为 bits 表示
+// 将 float32 转换为 bits 表示
 func floatToBits32(f float32) uint32 {
 	return *(*uint32)(unsafe.Pointer(&f))
 }
 
-// floatToBits64 将 float64 转换为 bits 表示
+// 将 float64 转换为 bits 表示
 func floatToBits64(f float64) uint64 {
 	return *(*uint64)(unsafe.Pointer(&f))
 }
 
-// writeRational 写入有理数（使用连分数算法提高精度）
+// 写入有理数（使用连分数算法提高精度）
 func writeRational(file *os.File, value float64, signed bool) {
 	num, denom := floatToRational(value, 1000000000)
 
@@ -449,7 +446,7 @@ type imageDimensions struct {
 	activeArea    [4]uint32 // [top, left, bottom, right]
 }
 
-// ExportRawDNG 导出未经色彩处理的线性 RAW DNG
+// 导出未经色彩处理的线性 RAW DNG
 func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename string, opts DNGOptions) error {
 	checkQuattroFormat(x3fFile)
 	file := createDNGFile(filename)
@@ -457,7 +454,14 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 
 	dims := calculateDimensions(imageSection, x3fFile, opts)
 
-	imageData := prepareImageData(imageSection, dims)
+	var imageData []byte
+	if opts.HasIntermediateData && opts.PreprocessedData != nil {
+		// 使用 preprocessed 数据（已经 expand）
+		imageData = preparePreprocessedImageData(opts.PreprocessedData, dims)
+	} else {
+		// 使用原始解码数据
+		imageData = prepareImageData(imageSection, dims)
+	}
 
 	wb := x3fFile.GetWhiteBalance()
 
@@ -468,6 +472,8 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 	previewData, previewW, previewH := generatePreviewImage(imageData, dims.targetWidth, dims.targetHeight, 300, x3fFile, wb)
 	opcodeData := prepareSpatialGain(x3fFile, wb, dims)
 
+	// 默认模式应用色彩转换（等同于 C 的 -linear-srgb）
+	// -c 兼容模式不应用色彩转换（等同于 C 的默认模式）
 	if !opts.CompatibleWithC && opts.HasIntermediateData {
 		applyLinearSRGBConversion(imageData, dims, x3fFile, wb, opts)
 	}
@@ -479,15 +485,15 @@ func ExportRawDNG(x3fFile *x3f.File, imageSection *x3f.ImageSection, filename st
 	return writeAndUpdateProfiles(file, x3fFile, wb, previewOffset, subIFDOffset)
 }
 
-// checkQuattroFormat 检查是否为不支持的 Quattro 格式
+// 检查是否为 Quattro 格式 (已支持)
 func checkQuattroFormat(x3fFile *x3f.File) {
-	if x3fFile.Header.Version >= 0x00040000 {
-		panic(fmt.Errorf("Quattro 格式目前不支持 DNG 导出\n建议使用 C 版本工具: ./bin/osx-arm64/x3f_extract -dng <文件>"))
+	if x3fFile.Header.Version >= x3f.Version40 {
+		debug("Detected Quattro format (version 0x%08x), processing...", x3fFile.Header.Version)
 	}
 }
 
-// selectWhiteBalanceGain 选择白平衡增益
-func selectWhiteBalanceGain(x3fFile *x3f.File, wb string, opts DNGOptions) [3]float64 {
+// 选择白平衡增益
+func selectWhiteBalanceGain(x3fFile *x3f.File, wb string, opts DNGOptions) x3f.Vector3 {
 	if opts.CompatibleWithC {
 		// C 兼容模式: 使用传入的白平衡增益
 		return opts.WhiteBalance
@@ -501,10 +507,17 @@ func selectWhiteBalanceGain(x3fFile *x3f.File, wb string, opts DNGOptions) [3]fl
 	return wbGain
 }
 
-// getImageLevelsForDNG 获取用于 DNG 的图像电平
-func getImageLevelsForDNG(x3fFile *x3f.File, wbGain [3]float64, opts DNGOptions) x3f.ImageLevels {
+// 获取用于 DNG 的图像电平
+func getImageLevelsForDNG(x3fFile *x3f.File, wbGain x3f.Vector3, opts DNGOptions) x3f.ImageLevels {
 	if opts.CompatibleWithC {
-		// C 兼容模式: 使用原始电平
+		// -c 模式（等同于 C 默认）: 使用 intermediate levels
+		if opts.HasIntermediateData {
+			return x3f.ImageLevels{
+				Black: x3f.Vector3{opts.IntermediateBias, opts.IntermediateBias, opts.IntermediateBias},
+				White: opts.MaxIntermediate,
+			}
+		}
+		// Fallback: 使用原始电平
 		levels, ok := x3fFile.GetImageLevelsWithGain(wbGain)
 		if !ok {
 			panic(fmt.Errorf("无法获取图像电平"))
@@ -512,14 +525,14 @@ func getImageLevelsForDNG(x3fFile *x3f.File, wbGain [3]float64, opts DNGOptions)
 		return levels
 	}
 
-	// Linear sRGB 模式: 返回 0-65535 电平 (会在转换后使用)
+	// 默认模式（等同于 C 的 -linear-srgb）: 色彩转换后使用 0-65535
 	return x3f.ImageLevels{
-		Black: [3]float64{0.0, 0.0, 0.0},
+		Black: x3f.Vector3{0.0, 0.0, 0.0},
 		White: [3]uint32{65535, 65535, 65535},
 	}
 }
 
-// applyLinearSRGBConversion 应用线性 sRGB 转换 (类似 C 的 -linear-srgb)
+// 应用线性 sRGB 转换 (类似 C 的 -linear-srgb)
 func applyLinearSRGBConversion(imageData []byte, dims imageDimensions, x3fFile *x3f.File, wb string, opts DNGOptions) {
 	// 1. 获取白平衡增益
 	wbGain, ok := x3fFile.GetWhiteBalanceGain(wb)
@@ -556,13 +569,10 @@ func applyLinearSRGBConversion(imageData []byte, dims imageDimensions, x3fFile *
 	}
 
 	// 4. 获取 xyz_to_srgb 矩阵
-	xyzToSRGB := x3f.GetColorMatrix1ForDNG()
+	xyzToSRGB := x3f.GetColorMatrix1()
 
 	// 5. 组合矩阵: raw -> XYZ -> sRGB
-	var rawToXYZMat, xyzToSRGBMat, combinedMat matrix.Matrix3x3
-	copy(rawToXYZMat[:], rawToXYZ)
-	copy(xyzToSRGBMat[:], xyzToSRGB)
-	combinedMat = matrix.Multiply3x3(xyzToSRGBMat, rawToXYZMat)
+	combinedMat := xyzToSRGB.Multiply(rawToXYZ)
 
 	// 6. 对每个像素应用转换
 	maxOut := 65535.0
@@ -577,14 +587,14 @@ func applyLinearSRGBConversion(imageData []byte, dims imageDimensions, x3fFile *
 		b := float64(binary.LittleEndian.Uint16(imageData[offset+4:]))
 
 		// 归一化到 [0, 1] (从 14-bit intermediate)
-		input := [3]float64{
+		input := x3f.Vector3{
 			(r - intermediateBias) / (float64(maxIntermediate[0]) - intermediateBias),
 			(g - intermediateBias) / (float64(maxIntermediate[1]) - intermediateBias),
 			(b - intermediateBias) / (float64(maxIntermediate[2]) - intermediateBias),
 		}
 
 		// 应用色彩矩阵
-		output := [3]float64{
+		output := x3f.Vector3{
 			combinedMat[0]*input[0] + combinedMat[1]*input[1] + combinedMat[2]*input[2],
 			combinedMat[3]*input[0] + combinedMat[4]*input[1] + combinedMat[5]*input[2],
 			combinedMat[6]*input[0] + combinedMat[7]*input[1] + combinedMat[8]*input[2],
@@ -603,14 +613,14 @@ func applyLinearSRGBConversion(imageData []byte, dims imageDimensions, x3fFile *
 	}
 }
 
-// writeTIFFHeader 写入 TIFF/DNG 文件头
+// 写入 TIFF/DNG 文件头
 func writeTIFFHeader(file *os.File) {
 	file.Write([]byte{0x49, 0x49}) // Little Endian
 	binary.Write(file, binary.LittleEndian, uint16(42))
 	binary.Write(file, binary.LittleEndian, uint32(8)) // IFD0 偏移
 }
 
-// createDNGFile 创建 DNG 输出文件
+// 创建 DNG 输出文件
 func createDNGFile(filename string) *os.File {
 	file, err := os.Create(filename)
 	if err != nil {
@@ -619,14 +629,24 @@ func createDNGFile(filename string) *os.File {
 	return file
 }
 
-// calculateDimensions 计算图像尺寸和裁剪参数
+// 计算图像尺寸和裁剪参数
 func calculateDimensions(imageSection *x3f.ImageSection, x3fFile *x3f.File, opts DNGOptions) imageDimensions {
-	dims := getDecodedDimensions(imageSection)
+	var dims imageDimensions
+	if opts.HasIntermediateData && opts.PreprocessedData != nil {
+		// 使用 preprocessed 数据的尺寸（已经 expand）
+		dims = imageDimensions{
+			decodedWidth:  opts.ImageWidth,
+			decodedHeight: opts.ImageHeight,
+		}
+	} else {
+		// 使用原始解码尺寸
+		dims = getDecodedDimensions(imageSection)
+	}
 	applyDimensionOptions(&dims, x3fFile, opts)
 	return dims
 }
 
-// getDecodedDimensions 获取解码后的图像尺寸
+// 获取解码后的图像尺寸
 func getDecodedDimensions(imageSection *x3f.ImageSection) imageDimensions {
 	dims := imageDimensions{
 		decodedWidth:  imageSection.Columns,
@@ -643,13 +663,15 @@ func getDecodedDimensions(imageSection *x3f.ImageSection) imageDimensions {
 	return dims
 }
 
-// applyDimensionOptions 根据选项应用尺寸和裁剪设置
+// 根据选项应用尺寸和裁剪设置
 func applyDimensionOptions(dims *imageDimensions, x3fFile *x3f.File, opts DNGOptions) {
-	if opts.CompatibleWithC {
-		applyCCompatibleMode(dims, x3fFile)
-	} else if opts.NoCrop {
+	if opts.NoCrop {
 		applyNoCropMode(dims)
+	} else if opts.CompatibleWithC {
+		// -c 模式：输出完整图像 + Active Area 标记（不物理裁剪）
+		applyCCompatibleMode(dims, x3fFile)
 	} else {
+		// 默认模式：物理裁剪到 Active Area
 		applyCropMode(dims, x3fFile)
 	}
 }
@@ -661,7 +683,8 @@ func applyCCompatibleMode(dims *imageDimensions, x3fFile *x3f.File) {
 	dims.cropX = 0
 	dims.cropY = 0
 
-	x0, y0, x1, y1, ok := x3fFile.GetActiveImageArea()
+	// 使用 GetCAMFRectScaled 以支持 Quattro 的缩放坐标
+	x0, y0, x1, y1, ok := x3fFile.GetCAMFRectScaled("ActiveImageArea", dims.decodedWidth, dims.decodedHeight, true)
 	if ok {
 		dims.activeArea = [4]uint32{y0, x0, y1 + 1, x1 + 1}
 	} else {
@@ -669,7 +692,7 @@ func applyCCompatibleMode(dims *imageDimensions, x3fFile *x3f.File) {
 	}
 }
 
-// applyNoCropMode 不裁剪模式：输出完整解码数据
+// 不裁剪模式：输出完整解码数据
 func applyNoCropMode(dims *imageDimensions) {
 	dims.targetWidth = dims.decodedWidth
 	dims.targetHeight = dims.decodedHeight
@@ -678,21 +701,24 @@ func applyNoCropMode(dims *imageDimensions) {
 	dims.activeArea = [4]uint32{0, 0, dims.targetHeight, dims.targetWidth}
 }
 
-// applyCropMode 默认裁剪模式：裁剪到 Active Area
+// 默认裁剪模式：物理裁剪到 Active Area
 func applyCropMode(dims *imageDimensions, x3fFile *x3f.File) {
-	x0, y0, x1, y1, ok := x3fFile.GetActiveImageArea()
+	// 使用 GetCAMFRectScaled 以支持 Quattro 的缩放坐标
+	x0, y0, x1, y1, ok := x3fFile.GetCAMFRectScaled("ActiveImageArea", dims.decodedWidth, dims.decodedHeight, true)
 	if ok {
+		// 物理裁剪到 Active Area
 		dims.cropX = int32(x0)
 		dims.cropY = int32(y0)
 		dims.targetWidth = x1 - x0 + 1
 		dims.targetHeight = y1 - y0 + 1
+		// 裁剪后的 Active Area 就是完整图像
+		dims.activeArea = [4]uint32{0, 0, dims.targetHeight, dims.targetWidth}
 	} else {
 		applyDefaultCrop(dims, x3fFile)
 	}
-	dims.activeArea = [4]uint32{0, 0, dims.targetHeight, dims.targetWidth}
 }
 
-// applyDefaultCrop 使用文件头尺寸进行居中裁剪
+// 使用文件头尺寸进行居中裁剪
 func applyDefaultCrop(dims *imageDimensions, x3fFile *x3f.File) {
 	dims.targetWidth = x3fFile.Header.Columns
 	dims.targetHeight = x3fFile.Header.Rows
@@ -704,7 +730,7 @@ func applyDefaultCrop(dims *imageDimensions, x3fFile *x3f.File) {
 	dims.cropY = int32((dims.decodedHeight - dims.targetHeight) / 2)
 }
 
-// prepareImageData 准备 16-bit RGB 图像数据
+// 准备 16-bit RGB 图像数据
 func prepareImageData(imageSection *x3f.ImageSection, dims imageDimensions) []byte {
 	validateDecodedDataLength(imageSection, dims)
 	imageData := make([]byte, dims.targetWidth*dims.targetHeight*3*2)
@@ -712,7 +738,46 @@ func prepareImageData(imageSection *x3f.ImageSection, dims imageDimensions) []by
 	return imageData
 }
 
-// validateDecodedDataLength 验证解码数据长度
+// 准备preprocessed 数据（已经 expand）
+func preparePreprocessedImageData(preprocessedData []uint16, dims imageDimensions) []byte {
+	// 验证 preprocessed 数据长度
+	expectedLen := int(dims.decodedWidth * dims.decodedHeight * 3)
+	actualLen := len(preprocessedData)
+	if actualLen != expectedLen {
+		panic(fmt.Errorf("PreprocessedData 长度不匹配: 期望 %d (width=%d, height=%d), 实际 %d",
+			expectedLen, dims.decodedWidth, dims.decodedHeight, actualLen))
+	}
+
+	// 分配输出数据
+	imageData := make([]byte, dims.targetWidth*dims.targetHeight*3*2)
+
+	// 复制数据（处理裁剪）
+	if dims.cropX == 0 && dims.cropY == 0 && dims.targetWidth == dims.decodedWidth && dims.targetHeight == dims.decodedHeight {
+		// 完整复制（无裁剪）
+		for i, val := range preprocessedData {
+			binary.LittleEndian.PutUint16(imageData[i*2:], val)
+		}
+	} else {
+		// 裁剪复制
+		for outY := uint32(0); outY < dims.targetHeight; outY++ {
+			for outX := uint32(0); outX < dims.targetWidth; outX++ {
+				srcX := int32(outX) + dims.cropX
+				srcY := int32(outY) + dims.cropY
+				srcIdx := int(srcY)*int(dims.decodedWidth)*3 + int(srcX)*3
+				dstIdx := int(outY)*int(dims.targetWidth)*3 + int(outX)*3
+
+				for c := 0; c < 3; c++ {
+					val := preprocessedData[srcIdx+c]
+					binary.LittleEndian.PutUint16(imageData[(dstIdx+c)*2:], val)
+				}
+			}
+		}
+	}
+
+	return imageData
+}
+
+// 验证解码数据长度
 func validateDecodedDataLength(imageSection *x3f.ImageSection, dims imageDimensions) {
 	expectedLen := int(dims.decodedWidth * dims.decodedHeight * 3)
 	actualLen := len(imageSection.DecodedData)
@@ -722,7 +787,7 @@ func validateDecodedDataLength(imageSection *x3f.ImageSection, dims imageDimensi
 	}
 }
 
-// copyImageData 复制图像数据（处理裁剪）
+// 复制图像数据（处理裁剪）
 func copyImageData(imageSection *x3f.ImageSection, imageData []byte, dims imageDimensions) {
 	if dims.cropX == 0 && dims.cropY == 0 && dims.targetWidth == dims.decodedWidth && dims.targetHeight == dims.decodedHeight {
 		copyFullImage(imageSection, imageData, dims)
@@ -731,7 +796,7 @@ func copyImageData(imageSection *x3f.ImageSection, imageData []byte, dims imageD
 	}
 }
 
-// copyFullImage 复制完整图像（无裁剪）
+// 复制完整图像（无裁剪）
 func copyFullImage(imageSection *x3f.ImageSection, imageData []byte, dims imageDimensions) {
 	for y := uint32(0); y < dims.targetHeight; y++ {
 		for x := uint32(0); x < dims.targetWidth; x++ {
@@ -745,14 +810,26 @@ func copyFullImage(imageSection *x3f.ImageSection, imageData []byte, dims imageD
 	}
 }
 
-// copyCroppedImage 复制裁剪后的图像
+// 复制裁剪后的图像
 func copyCroppedImage(imageSection *x3f.ImageSection, imageData []byte, dims imageDimensions) {
+	decodedLen := len(imageSection.DecodedData)
+
+	debug("copyCroppedImage: decodedWidth=%d, decodedHeight=%d, targetWidth=%d, targetHeight=%d",
+		dims.decodedWidth, dims.decodedHeight, dims.targetWidth, dims.targetHeight)
+	debug("copyCroppedImage: cropX=%d, cropY=%d, DecodedData len=%d",
+		dims.cropX, dims.cropY, decodedLen)
+
 	for outY := uint32(0); outY < dims.targetHeight; outY++ {
 		for outX := uint32(0); outX < dims.targetWidth; outX++ {
 			srcX := int32(outX) + dims.cropX
 			srcY := int32(outY) + dims.cropY
 			srcIdx := int(srcY)*int(dims.decodedWidth) + int(srcX)
 			outIdx := (int(outY)*int(dims.targetWidth) + int(outX)) * 6
+
+			// 边界检查
+			if srcIdx*3+2 >= decodedLen {
+				panic(fmt.Errorf("Index out of range: srcIdx=%d, srcIdx*3+2=%d, decodedLen=%d", srcIdx, srcIdx*3+2, decodedLen))
+			}
 
 			binary.LittleEndian.PutUint16(imageData[outIdx:], imageSection.DecodedData[srcIdx*3])
 			binary.LittleEndian.PutUint16(imageData[outIdx+2:], imageSection.DecodedData[srcIdx*3+1])
@@ -761,7 +838,7 @@ func copyCroppedImage(imageSection *x3f.ImageSection, imageData []byte, dims ima
 	}
 }
 
-// prepareSpatialGain 准备 Spatial Gain 数据
+// 准备 Spatial Gain 数据
 func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions) []byte {
 	spatialGains := x3fFile.GetSpatialGain(wb)
 	if len(spatialGains) == 0 {
@@ -776,7 +853,7 @@ func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions) []by
 	return buildOpcodeList2(spatialGains, []uint32{y0, x0, y1 + 1, x1 + 1}, dims.targetHeight, dims.targetWidth)
 }
 
-// writeIFD0 写入 IFD0 标签
+// 写入 IFD0 标签
 func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dims imageDimensions, previewW, previewH uint32, imageLevels x3f.ImageLevels) {
 	ifd0 := NewIFDWriter(file)
 
@@ -790,7 +867,7 @@ func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dim
 	}
 }
 
-// addPreviewTags 添加预览图相关标签
+// 添加预览图相关标签
 func addPreviewTags(ifd0 *IFDWriter, previewW, previewH uint32) {
 	ifd0.AddLong(TagNewSubfileType, 1)
 	ifd0.AddLong(TagImageWidth, previewW)
@@ -804,64 +881,64 @@ func addPreviewTags(ifd0 *IFDWriter, previewW, previewH uint32) {
 	ifd0.AddLong(TagRowsPerStrip, previewH)
 	ifd0.AddLong(TagStripByteCounts, previewW*previewH*3)
 	ifd0.AddShort(TagPlanarConfiguration, 1)
-	ifd0.AddASCII(TagSoftware, "x3f-go "+Version, 32)
+	ifd0.AddASCII(TagSoftware, "x3f-go "+x3f.Version, 32)
 	ifd0.ReservePointer(TagSubIFDs)
 }
 
-// addDNGVersionTags 添加 DNG 版本标签
+// 添加 DNG 版本标签
 func addDNGVersionTags(ifd0 *IFDWriter) {
 	ifd0.AddByte(TagDNGVersion, uint32(1)|(uint32(4)<<8))
 	ifd0.AddByte(TagDNGBackwardVersion, uint32(1)|(uint32(3)<<8))
 }
 
-// addColorMatrixTags 添加色彩矩阵标签
+// 添加色彩矩阵标签
 func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptions, imageLevels x3f.ImageLevels) {
 	if !opts.CompatibleWithC && opts.HasIntermediateData {
 		// Linear sRGB 模式: 使用标准 XYZ to sRGB 矩阵
-		xyzToSRGB := x3f.GetColorMatrix1ForDNG()
-		ifd0.AddRationalArrayFromFloats(TagColorMatrix1, xyzToSRGB, true)
+		xyzToSRGB := x3f.GetColorMatrix1()
+		ifd0.AddRationalArrayFromMatrix(TagColorMatrix1, xyzToSRGB, true)
 
 		// Camera Calibration: 使用白平衡校正
 		gainD65 := getD65Gain(x3fFile, opts)
-		cameraCalibration := x3f.GetCameraCalibration1ForDNG(gainD65)
-		ifd0.AddRationalArrayFromFloats(TagCameraCalibration1, cameraCalibration, true)
+		cameraCalibration := x3f.GetCameraCalibration1(gainD65)
+		ifd0.AddRationalArrayFromMatrix(TagCameraCalibration1, cameraCalibration, true)
 	} else {
 		// C 兼容模式: 使用相机的 BMT to XYZ 矩阵
-		bmtToXYZSlice, ok := x3fFile.GetBMTToXYZ(wb)
+		bmtToXYZ, ok := x3fFile.GetBMTToXYZ(wb)
 		if !ok {
 			panic(fmt.Errorf("无法获取 BMT to XYZ 矩阵"))
 		}
 
-		var bmtToXYZ matrix.Matrix3x3
-		copy(bmtToXYZ[:], bmtToXYZSlice)
-		xyzToBMT := matrix.Inverse3x3(bmtToXYZ)
-		ifd0.AddRationalArrayFromFloats(TagColorMatrix1, xyzToBMT[:], true)
+		xyzToBMT, _ := bmtToXYZ.Inverse()
+		ifd0.AddRationalArrayFromMatrix(TagColorMatrix1, xyzToBMT, true)
 
 		gainD65 := getD65Gain(x3fFile, opts)
-		cameraCalibration := x3f.GetCameraCalibration1ForDNG(gainD65)
-		ifd0.AddRationalArrayFromFloats(TagCameraCalibration1, cameraCalibration, true)
+		cameraCalibration := x3f.GetCameraCalibration1(gainD65)
+		ifd0.AddRationalArrayFromMatrix(TagCameraCalibration1, cameraCalibration, true)
 	}
 
-	// AsShotNeutral: Linear sRGB 模式使用中性值,否则使用白平衡倒数
-	var asShotNeutral []float64
-	if !opts.CompatibleWithC && opts.HasIntermediateData {
-		// Linear sRGB 模式: 白平衡已应用,使用中性值
-		asShotNeutral = []float64{1.0, 1.0, 1.0}
-	} else {
-		// C 兼容模式: 使用白平衡增益的倒数
+	// AsShotNeutral:
+	// - 默认模式（应用了色彩转换）: [1,1,1] 表示白平衡已应用
+	// - -c 模式（未应用色彩转换）: 1/gain 让 RAW 处理软件应用白平衡
+	var asShotNeutral x3f.Vector3
+	if opts.CompatibleWithC {
+		// -c 模式: 使用白平衡增益的倒数
 		wbGain, ok := x3fFile.GetWhiteBalanceGain(wb)
 		if !ok {
 			wbGain = opts.WhiteBalance
 		}
 		asShotNeutral = calculateAsShotNeutral(wbGain)
+	} else {
+		// 默认模式: 白平衡已应用，使用中性值
+		asShotNeutral = x3f.Vector3{1.0, 1.0, 1.0}
 	}
-	ifd0.AddRationalArrayFromFloats(TagAsShotNeutral, asShotNeutral, false)
+	ifd0.AddRationalArrayFromVector3(TagAsShotNeutral, asShotNeutral, false)
 
 	ifd0.AddSRational(TagBaselineExposure, 0, 1)
 }
 
-// getD65Gain 获取 D65 白平衡增益
-func getD65Gain(x3fFile *x3f.File, opts DNGOptions) [3]float64 {
+// 获取 D65 白平衡增益
+func getD65Gain(x3fFile *x3f.File, opts DNGOptions) x3f.Vector3 {
 	gainD65, ok := x3fFile.GetWhiteBalanceGain("Overcast")
 	if !ok {
 		gainD65 = opts.WhiteBalance
@@ -869,9 +946,9 @@ func getD65Gain(x3fFile *x3f.File, opts DNGOptions) [3]float64 {
 	return gainD65
 }
 
-// calculateAsShotNeutral 计算 AsShotNeutral (白平衡的倒数)
-func calculateAsShotNeutral(wb [3]float64) []float64 {
-	asShotNeutral := make([]float64, 3)
+// 计算 AsShotNeutral (白平衡的倒数)
+func calculateAsShotNeutral(wb x3f.Vector3) x3f.Vector3 {
+	var asShotNeutral x3f.Vector3
 	for i := 0; i < 3; i++ {
 		if wb[i] > 0 {
 			asShotNeutral[i] = 1.0 / wb[i]
@@ -882,12 +959,11 @@ func calculateAsShotNeutral(wb [3]float64) []float64 {
 	return asShotNeutral
 }
 
-// addProfileTags 添加 Profile 相关标签
+// 添加 Profile 相关标签
 func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptions) {
 	if !opts.CompatibleWithC && opts.HasIntermediateData {
 		// Linear sRGB 模式: 使用 Linear sRGB profile
 		ifd0.AddASCII(TagImageDescription, "Preprocessed linear sRGB with white balance applied. Camera Calibration matrix is for reference only.", 128)
-		ifd0.AddASCII(TagSoftware, "x3f-go v0.1.0", 32)
 
 		profileName := "Linear sRGB"
 		ifd0.AddASCII(TagAsShotProfileName, profileName, 32)
@@ -895,7 +971,7 @@ func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptio
 
 		// ForwardMatrix: sRGB to XYZ
 		forwardMatrix := x3f.GetForwardMatrixWithSRGB()
-		ifd0.AddRationalArrayFromFloats(TagForwardMatrix1, forwardMatrix, true)
+		ifd0.AddRationalArrayFromMatrix(TagForwardMatrix1, forwardMatrix, true)
 
 		ifd0.AddLong(TagDefaultBlackRender, 1)
 	} else {
@@ -904,11 +980,11 @@ func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptio
 		ifd0.AddASCII(TagAsShotProfileName, profileName, 32)
 		ifd0.AddASCII(TagProfileName, profileName, 32)
 
-		forwardMatrix1, ok := x3fFile.GetForwardMatrix1ForDNG(wb)
+		forwardMatrix1, ok := x3fFile.GetForwardMatrix1(wb)
 		if !ok {
 			panic(fmt.Errorf("无法获取 ForwardMatrix1: 白平衡 '%s' 的 ColorCorrections 数据读取失败", wb))
 		}
-		ifd0.AddRationalArrayFromFloats(TagForwardMatrix1, forwardMatrix1, true)
+		ifd0.AddRationalArrayFromMatrix(TagForwardMatrix1, forwardMatrix1, true)
 
 		ifd0.AddLong(TagDefaultBlackRender, 1)
 
@@ -919,7 +995,7 @@ func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptio
 	}
 }
 
-// writePreviewData 写入预览图数据
+// 写入预览图数据
 func writePreviewData(file *os.File, previewData []byte) int64 {
 	offset, _ := file.Seek(0, io.SeekCurrent)
 	if _, err := file.Write(previewData); err != nil {
@@ -928,7 +1004,7 @@ func writePreviewData(file *os.File, previewData []byte) int64 {
 	return offset
 }
 
-// writeSubIFDData 写入 SubIFD 数据
+// 写入 SubIFD 数据
 func writeSubIFDData(file *os.File, x3fFile *x3f.File, imageData []byte, dims imageDimensions, imageLevels x3f.ImageLevels, opcodeData []byte) int64 {
 	offset, err := writeSubIFD(file, x3fFile, imageData,
 		dims.targetWidth, dims.targetHeight,
@@ -940,7 +1016,7 @@ func writeSubIFDData(file *os.File, x3fFile *x3f.File, imageData []byte, dims im
 	return int64(offset)
 }
 
-// writeAndUpdateProfiles 写入额外 Profiles 并更新所有偏移量
+// 写入额外 Profiles 并更新所有偏移量
 func writeAndUpdateProfiles(file *os.File, x3fFile *x3f.File, wb string, previewOffset, subIFDOffset int64) error {
 	var profileOffsets []uint32
 	if len(DefaultCameraProfiles) > 1 {
@@ -956,7 +1032,7 @@ func writeAndUpdateProfiles(file *os.File, x3fFile *x3f.File, wb string, preview
 	return nil
 }
 
-// updateIFD0Offsets 更新 IFD0 中的偏移量
+// 更新 IFD0 中的偏移量
 func updateIFD0Offsets(file *os.File, previewOffset, subIFDOffset int64, profileOffsets []uint32) {
 	file.Seek(8, io.SeekStart)
 
@@ -983,7 +1059,7 @@ func updateIFD0Offsets(file *os.File, previewOffset, subIFDOffset int64, profile
 	}
 }
 
-// updateProfileOffsets 更新 Profile 偏移量数组
+// 更新 Profile 偏移量数组
 func updateProfileOffsets(file *os.File, profileOffsets []uint32) {
 	var offsetArrayPos uint32
 	binary.Read(file, binary.LittleEndian, &offsetArrayPos)

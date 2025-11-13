@@ -96,7 +96,7 @@ type CAMFData struct {
 	Entries []*CAMFEntry
 }
 
-// LoadCAMFSection 加载 CAMF 段
+// 加载 CAMF 段
 func (f *File) LoadCAMFSection(entry *DirectoryEntry) error {
 	// 对于 version >= 4.0，entry.Type 直接是 CAMF
 	// 对于 version < 4.0，entry.Type 是 SECc
@@ -190,7 +190,7 @@ func (f *File) LoadCAMFSection(entry *DirectoryEntry) error {
 	return nil
 }
 
-// parseCAMFEntry 解析一个 CAMF 条目
+// 解析一个 CAMF 条目
 func (f *File) parseCAMFEntry(data []byte, entryOffset uint32) (*CAMFEntry, int64, error) {
 	if len(data) < 20 {
 		return nil, 0, fmt.Errorf("数据太短")
@@ -253,7 +253,7 @@ func (f *File) parseCAMFEntry(data []byte, entryOffset uint32) (*CAMFEntry, int6
 	return entry, int64(entry.EntrySize), nil
 }
 
-// parseCAMFTextEntry 解析文本条目
+// 解析文本条目
 func (f *File) parseCAMFTextEntry(entry *CAMFEntry, data []byte) error {
 	if entry.ValueOffset == 0 || int(entry.ValueOffset) >= len(data) {
 		return nil
@@ -286,7 +286,7 @@ func (f *File) parseCAMFTextEntry(entry *CAMFEntry, data []byte) error {
 	return nil
 }
 
-// parseCAMFPropertyEntry 解析属性列表条目
+// 解析属性列表条目
 func (f *File) parseCAMFPropertyEntry(entry *CAMFEntry, data []byte) error {
 	if entry.ValueOffset == 0 || int(entry.ValueOffset) >= len(data) {
 		return nil
@@ -387,7 +387,7 @@ func (f *File) parseCAMFPropertyEntry(entry *CAMFEntry, data []byte) error {
 	return nil
 }
 
-// parseCAMFMatrixEntry 解析矩阵条目
+// 解析矩阵条目
 func (f *File) parseCAMFMatrixEntry(entry *CAMFEntry, data []byte) error {
 	if entry.ValueOffset == 0 || int(entry.ValueOffset) >= len(data) {
 		return nil
@@ -471,7 +471,7 @@ func (f *File) parseCAMFMatrixEntry(entry *CAMFEntry, data []byte) error {
 	return nil
 }
 
-// decodeMatrixData 解码矩阵数据
+// 解码矩阵数据
 func (f *File) decodeMatrixData(entry *CAMFEntry) error {
 	if len(entry.MatrixData) == 0 {
 		return nil
@@ -610,7 +610,7 @@ func (f *File) decodeMatrixData(entry *CAMFEntry) error {
 	return nil
 }
 
-// GetCAMFText 获取文本条目
+// 获取文本条目
 func (f *File) GetCAMFText(name string) (string, bool) {
 	if f.CAMFSection == nil {
 		return "", false
@@ -625,7 +625,7 @@ func (f *File) GetCAMFText(name string) (string, bool) {
 	return "", false
 }
 
-// GetCAMFProperty 获取属性值
+// 获取属性值
 func (f *File) GetCAMFProperty(listName, propName string) (string, bool) {
 	if f.CAMFSection == nil {
 		return "", false
@@ -653,107 +653,84 @@ func (f *File) GetCAMFProperty(listName, propName string) (string, bool) {
 	return "", false
 }
 
-// GetCAMFFloat 获取单个浮点数
+// 通用 CAMF 条目查找辅助函数
+func (f *File) getCAMFEntry(name string, expectedSize uint32) *CAMFEntry {
+	if f.CAMFSection == nil {
+		return nil
+	}
+
+	for _, entry := range f.CAMFSection.Entries {
+		if entry.Name == name && entry.ID == CMbM {
+			if expectedSize > 0 && entry.MatrixElements != expectedSize {
+				continue
+			}
+			return entry
+		}
+	}
+	return nil
+}
+
+// 获取单个浮点数
 func (f *File) GetCAMFFloat(name string) (float64, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, 1)
+	if entry == nil {
 		return 0, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if entry.MatrixElements != 1 {
-				continue
-			}
-			if floatData, ok := entry.MatrixDecoded.([]float64); ok && len(floatData) > 0 {
-				return floatData[0], true
-			}
-		}
+	if floatData, ok := entry.MatrixDecoded.([]float64); ok && len(floatData) > 0 {
+		return floatData[0], true
 	}
-
 	return 0, false
 }
 
-// GetCAMFUint32 获取单个无符号整数
+// 获取单个无符号整数
 func (f *File) GetCAMFUint32(name string) (uint32, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, 1)
+	if entry == nil {
 		return 0, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if entry.MatrixElements != 1 {
-				continue
-			}
-			if uintData, ok := entry.MatrixDecoded.([]uint32); ok && len(uintData) > 0 {
-				return uintData[0], true
-			}
-		}
+	if uintData, ok := entry.MatrixDecoded.([]uint32); ok && len(uintData) > 0 {
+		return uintData[0], true
 	}
-
 	return 0, false
 }
 
-// GetCAMFInt32 获取单个有符号整数
+// 获取单个有符号整数
 func (f *File) GetCAMFInt32(name string) (int32, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, 1)
+	if entry == nil {
 		return 0, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if entry.MatrixElements != 1 {
-				continue
-			}
-			if intData, ok := entry.MatrixDecoded.([]int32); ok && len(intData) > 0 {
-				return intData[0], true
-			}
-		}
+	if intData, ok := entry.MatrixDecoded.([]int32); ok && len(intData) > 0 {
+		return intData[0], true
 	}
-
 	return 0, false
 }
 
-// GetCAMFFloatVector 获取浮点数向量
+// 获取浮点数向量
 func (f *File) GetCAMFFloatVector(name string, expectedSize uint32) ([]float64, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, expectedSize)
+	if entry == nil {
 		return nil, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if expectedSize > 0 && entry.MatrixElements != expectedSize {
-				continue
-			}
-			if floatData, ok := entry.MatrixDecoded.([]float64); ok {
-				return floatData, true
-			}
-		}
+	if floatData, ok := entry.MatrixDecoded.([]float64); ok {
+		return floatData, true
 	}
-
 	return nil, false
 }
 
-// GetCAMFInt32Vector 获取有符号整数向量
+// 获取有符号整数向量
 func (f *File) GetCAMFInt32Vector(name string, expectedSize uint32) ([]int32, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, expectedSize)
+	if entry == nil {
 		return nil, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if expectedSize > 0 && entry.MatrixElements != expectedSize {
-				continue
-			}
-			if intData, ok := entry.MatrixDecoded.([]int32); ok {
-				return intData, true
-			}
-		}
+	if intData, ok := entry.MatrixDecoded.([]int32); ok {
+		return intData, true
 	}
-
 	return nil, false
 }
 
-// GetCAMFMatrix 获取矩阵（通用方法）
+// 获取矩阵（通用方法）
 func (f *File) GetCAMFMatrix(name string) (interface{}, []uint32, bool) {
 	if f.CAMFSection == nil {
 		return nil, nil, false
@@ -772,7 +749,7 @@ func (f *File) GetCAMFMatrix(name string) (interface{}, []uint32, bool) {
 	return nil, nil, false
 }
 
-// GetCAMFMatrixUint32 获取指定维度的 uint32 矩阵
+// 获取指定维度的 uint32 矩阵
 func (f *File) GetCAMFMatrixUint32(name string, expectedRows, expectedCols uint32) ([]uint32, bool) {
 	data, dims, ok := f.GetCAMFMatrix(name)
 	if !ok {
@@ -793,7 +770,36 @@ func (f *File) GetCAMFMatrixUint32(name string, expectedRows, expectedCols uint3
 	}
 }
 
-// GetWhiteBalance 获取白平衡预设名称
+// GetCameraModel 根据 CAMERAID 返回相机型号名称
+func (f *File) GetCameraModel() string {
+	cameraID, ok := f.GetCAMFUint32("CAMERAID")
+	if !ok {
+		return "SIGMA Digital Camera"
+	}
+
+	switch cameraID {
+	case CameraIDDP1M:
+		return "SIGMA dp1 Merrill"
+	case CameraIDDP2M: // DP2M 和 DP3M 共用 ID 78
+		return "SIGMA dp2/dp3 Merrill"
+	case CameraIDDP0Q:
+		return "SIGMA dp0 Quattro"
+	case CameraIDDP1Q:
+		return "SIGMA dp1 Quattro"
+	case CameraIDDP2Q:
+		return "SIGMA dp2 Quattro"
+	case CameraIDDP3Q:
+		return "SIGMA dp3 Quattro"
+	case CameraIDSDQ:
+		return "SIGMA sd Quattro"
+	case CameraIDSDQH:
+		return "SIGMA sd Quattro H"
+	default:
+		return "SIGMA Digital Camera"
+	}
+}
+
+// 获取白平衡预设名称
 func (f *File) GetWhiteBalance() string {
 	if wb, ok := f.GetCAMFUint32("WhiteBalance"); ok {
 		switch wb {
@@ -831,7 +837,7 @@ func (f *File) GetWhiteBalance() string {
 	return "Auto"
 }
 
-// IsTRUEEngine 判断是否为 TRUE 引擎
+// 判断是否为 TRUE 引擎
 func (f *File) IsTRUEEngine() bool {
 	if f.CAMFSection == nil {
 		return false
@@ -855,7 +861,7 @@ func (f *File) IsTRUEEngine() bool {
 	return hasColorCorrections && hasGains
 }
 
-// GetMaxRAW 获取最大 RAW 值
+// 获取最大 RAW 值
 func (f *File) GetMaxRAW() ([3]uint32, bool) {
 	// 优先尝试从 ImageDepth 获取
 	if imageDepth, ok := f.GetCAMFUint32("ImageDepth"); ok {
@@ -882,7 +888,7 @@ func (f *File) GetMaxRAW() ([3]uint32, bool) {
 	return [3]uint32{0, 0, 0}, false
 }
 
-// GetCAMFMatrixForWB 根据白平衡预设获取矩阵
+// 根据白平衡预设获取矩阵
 func (f *File) GetCAMFMatrixForWB(listName, wb string, dims []uint32) ([]float64, bool) {
 	// 从属性列表中获取矩阵名称
 	matrixName, ok := f.GetCAMFProperty(listName, wb)
@@ -946,20 +952,23 @@ func (f *File) GetCAMFMatrixForWB(listName, wb string, dims []uint32) ([]float64
 	return nil, false
 }
 
-// GetWhiteBalanceGain 获取白平衡增益
-func (f *File) GetWhiteBalanceGain(wb string) ([3]float64, bool) {
-	var gain [3]float64
+// 获取白平衡增益
+func (f *File) GetWhiteBalanceGain(wb string) (Vector3, bool) {
+	var gain Vector3
 
 	// 尝试从 WhiteBalanceGains 或 DP1_WhiteBalanceGains 获取
 	if gainVec, ok := f.GetCAMFMatrixForWB("WhiteBalanceGains", wb, []uint32{3}); ok && len(gainVec) == 3 {
 		gain[0], gain[1], gain[2] = gainVec[0], gainVec[1], gainVec[2]
 	} else if gainVec, ok := f.GetCAMFMatrixForWB("DP1_WhiteBalanceGains", wb, []uint32{3}); ok && len(gainVec) == 3 {
 		gain[0], gain[1], gain[2] = gainVec[0], gainVec[1], gainVec[2]
-	} else if camToXYZ, ok1 := f.GetCAMFMatrixForWB("WhiteBalanceIlluminants", wb, []uint32{3, 3}); ok1 {
+	} else if camToXYZSlice, ok1 := f.GetCAMFMatrixForWB("WhiteBalanceIlluminants", wb, []uint32{3, 3}); ok1 {
 		// 旧式白平衡计算
-		if wbCorrection, ok2 := f.GetCAMFMatrixForWB("WhiteBalanceCorrections", wb, []uint32{3, 3}); ok2 {
+		if wbCorrectionSlice, ok2 := f.GetCAMFMatrixForWB("WhiteBalanceCorrections", wb, []uint32{3, 3}); ok2 {
 			// raw_to_xyz = wb_correction * cam_to_xyz
-			rawToXYZ := multiply3x3(wbCorrection, camToXYZ)
+			var wbCorrection, camToXYZ Matrix3x3
+			copy(wbCorrection[:], wbCorrectionSlice)
+			copy(camToXYZ[:], camToXYZSlice)
+			rawToXYZ := wbCorrection.Multiply(camToXYZ)
 
 			// 计算 raw_neutral
 			rawNeutral := getRawNeutral(rawToXYZ)
@@ -969,10 +978,10 @@ func (f *File) GetWhiteBalanceGain(wb string) ([3]float64, bool) {
 			gain[1] = 1.0 / rawNeutral[1]
 			gain[2] = 1.0 / rawNeutral[2]
 		} else {
-			return [3]float64{}, false
+			return Vector3{}, false
 		}
 	} else {
-		return [3]float64{}, false
+		return Vector3{}, false
 	}
 
 	// 应用传感器调整增益
@@ -999,120 +1008,53 @@ func (f *File) GetWhiteBalanceGain(wb string) ([3]float64, bool) {
 	return gain, true
 }
 
-// getRawNeutral 计算 RAW 中性值
-func getRawNeutral(rawToXYZ []float64) [3]float64 {
+// 计算 RAW 中性值
+func getRawNeutral(rawToXYZ Matrix3x3) Vector3 {
 	// XYZ 中性值 (D65 白点)
-	xyzNeutral := [3]float64{0.950456, 1.0, 1.089058}
+	xyzNeutral := Vector3{0.950456, 1.0, 1.089058}
 
 	// xyz_to_raw = inverse(raw_to_xyz)
-	xyzToRaw := Inverse3x3(rawToXYZ)
+	xyzToRaw, _ := rawToXYZ.Inverse()
 
 	// raw_neutral = xyz_to_raw * xyz_neutral
-	rawNeutral := [3]float64{
-		xyzToRaw[0]*xyzNeutral[0] + xyzToRaw[1]*xyzNeutral[1] + xyzToRaw[2]*xyzNeutral[2],
-		xyzToRaw[3]*xyzNeutral[0] + xyzToRaw[4]*xyzNeutral[1] + xyzToRaw[5]*xyzNeutral[2],
-		xyzToRaw[6]*xyzNeutral[0] + xyzToRaw[7]*xyzNeutral[1] + xyzToRaw[8]*xyzNeutral[2],
-	}
+	rawNeutral := xyzToRaw.Apply(xyzNeutral)
 
 	return rawNeutral
 }
 
-// multiply3x3 3x3 矩阵相乘
-func multiply3x3(a, b []float64) []float64 {
-	if len(a) != 9 || len(b) != 9 {
-		return make([]float64, 9)
-	}
-
-	result := make([]float64, 9)
-	for i := 0; i < 3; i++ {
-		for j := 0; j < 3; j++ {
-			sum := 0.0
-			for k := 0; k < 3; k++ {
-				sum += a[i*3+k] * b[k*3+j]
-			}
-			result[i*3+j] = sum
-		}
-	}
-	return result
-}
-
-// Inverse3x3 3x3 矩阵求逆
-func Inverse3x3(m []float64) []float64 {
-	if len(m) != 9 {
-		return make([]float64, 9)
-	}
-
-	inv := make([]float64, 9)
-
-	// 计算行列式
-	det := m[0]*(m[4]*m[8]-m[5]*m[7]) -
-		m[1]*(m[3]*m[8]-m[5]*m[6]) +
-		m[2]*(m[3]*m[7]-m[4]*m[6])
-
-	if math.Abs(det) < 1e-10 {
-		// 矩阵奇异，返回单位矩阵
-		inv[0], inv[4], inv[8] = 1, 1, 1
-		return inv
-	}
-
-	invDet := 1.0 / det
-
-	inv[0] = (m[4]*m[8] - m[5]*m[7]) * invDet
-	inv[1] = (m[2]*m[7] - m[1]*m[8]) * invDet
-	inv[2] = (m[1]*m[5] - m[2]*m[4]) * invDet
-	inv[3] = (m[5]*m[6] - m[3]*m[8]) * invDet
-	inv[4] = (m[0]*m[8] - m[2]*m[6]) * invDet
-	inv[5] = (m[2]*m[3] - m[0]*m[5]) * invDet
-	inv[6] = (m[3]*m[7] - m[4]*m[6]) * invDet
-	inv[7] = (m[1]*m[6] - m[0]*m[7]) * invDet
-	inv[8] = (m[0]*m[4] - m[1]*m[3]) * invDet
-
-	return inv
-}
-
-// GetColorMatrix 获取色彩矩阵 (RAW -> XYZ)
-func (f *File) GetColorMatrix(wb string) ([]float64, bool) {
+// 获取色彩矩阵 (RAW -> XYZ) 返回 Matrix3x3 类型
+func (f *File) GetColorMatrix(wb string) (Matrix3x3, bool) {
 	// 获取增益
 	gain, ok := f.GetWhiteBalanceGain(wb)
 	if !ok {
-		return nil, false
+		return Identity3x3(), false
 	}
 
 	// 获取 bmt_to_xyz
 	bmtToXYZ, ok := f.GetBMTToXYZ(wb)
 	if !ok {
-		return nil, false
+		return Identity3x3(), false
 	}
 
 	// 创建增益对角矩阵
-	gainMat := make([]float64, 9)
-	gainMat[0] = gain[0]
-	gainMat[4] = gain[1]
-	gainMat[8] = gain[2]
+	gainVec := Vector3(gain)
+	gainMat := Diagonal3x3(gainVec)
 
 	// raw_to_xyz = bmt_to_xyz * gain_mat
-	rawToXYZ := multiply3x3(bmtToXYZ, gainMat)
+	rawToXYZMat := bmtToXYZ.Multiply(gainMat)
 
-	return rawToXYZ, true
+	return rawToXYZMat, true
 }
 
-// GetCAMFUint32Vector 获取无符号整数向量
+// 获取无符号整数向量
 func (f *File) GetCAMFUint32Vector(name string, expectedSize uint32) ([]uint32, bool) {
-	if f.CAMFSection == nil {
+	entry := f.getCAMFEntry(name, expectedSize)
+	if entry == nil {
 		return nil, false
 	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbM {
-			if expectedSize > 0 && entry.MatrixElements != expectedSize {
-				continue
-			}
-			if uintData, ok := entry.MatrixDecoded.([]uint32); ok {
-				return uintData, true
-			}
-		}
+	if uintData, ok := entry.MatrixDecoded.([]uint32); ok {
+		return uintData, true
 	}
-
 	return nil, false
 }
 
@@ -1143,7 +1085,7 @@ func (f *File) GetActiveImageArea() (x0, y0, x1, y1 uint32, ok bool) {
 	return area[0], area[1], area[2], area[3], true
 }
 
-// decodeCAMFType2 解码 Type 2 CAMF 数据（XOR 解密）
+// 解码 Type 2 CAMF 数据（XOR 解密）
 func (f *File) decodeCAMFType2(encodedData []byte, fullData []byte) ([]byte, error) {
 	// 从偏移 24-27 读取 crypt_key (对应 SEC 头部的 row_stride 位置)
 	if len(fullData) < 28 {
@@ -1165,7 +1107,7 @@ func (f *File) decodeCAMFType2(encodedData []byte, fullData []byte) ([]byte, err
 	return decoded, nil
 }
 
-// decodeCAMFType4 解码 Type 4 CAMF 数据（Huffman）
+// 解码 Type 4 CAMF 数据（Huffman）
 func (f *File) decodeCAMFType4(encodedData []byte, fullData []byte) ([]byte, error) {
 	// 1. 读取 Huffman 表
 	elements := []TRUEHuffmanElement{}
@@ -1214,7 +1156,7 @@ func (f *File) decodeCAMFType4(encodedData []byte, fullData []byte) ([]byte, err
 	return f.camfDecodeType4Data(encodedData[huffmanStart:], tree, decodedDataSize, decodeBias, blockSize, blockCount)
 }
 
-// decodeCAMFType5 解码 Type 5 CAMF 数据
+// 解码 Type 5 CAMF 数据
 func (f *File) decodeCAMFType5(encodedData []byte, fullData []byte) ([]byte, error) {
 	// Type 5 与 Type 4 类似，但解码逻辑更简单
 	// 1. 读取 Huffman 表
@@ -1250,7 +1192,7 @@ func (f *File) decodeCAMFType5(encodedData []byte, fullData []byte) ([]byte, err
 	return f.camfDecodeType5Data(encodedData[huffmanStart:], tree, decodedDataSize, int32(decodeBias))
 }
 
-// camfDecodeType4Data 执行 Type 4 的实际解码
+// 执行 Type 4 的实际解码
 func (f *File) camfDecodeType4Data(huffmanData []byte, tree *HuffmanTree, decodedSize, seed, blockSize, blockCount uint32) ([]byte, error) {
 	decoded := make([]byte, decodedSize)
 	bs := &BitState{}
@@ -1345,7 +1287,7 @@ func (f *File) camfDecodeType4Data(huffmanData []byte, tree *HuffmanTree, decode
 	return decoded, nil
 }
 
-// camfDecodeType5Data 执行 Type 5 的实际解码
+// 执行 Type 5 的实际解码
 func (f *File) camfDecodeType5Data(huffmanData []byte, tree *HuffmanTree, decodedSize uint32, seed int32) ([]byte, error) {
 	decoded := make([]byte, decodedSize)
 	bs := &BitState{}
@@ -1361,93 +1303,98 @@ func (f *File) camfDecodeType5Data(huffmanData []byte, tree *HuffmanTree, decode
 	return decoded, nil
 }
 
-// GetColorMatrix1ForDNG 获取 DNG ColorMatrix1 (XYZ to sRGB)
+// GetColorMatrix1 获取 XYZ to sRGB 标准矩阵
 // 注意: 在 Sigma X3F 实现中，ColorMatrix1 是固定的 XYZ_to_sRGB 标准矩阵
 // 不依赖于相机或白平衡设置
-func GetColorMatrix1ForDNG() []float64 {
+func GetColorMatrix1() Matrix3x3 {
 	// XYZ_to_sRGB (D65) 标准矩阵（高精度）
 	// 使用 sRGB 标准的完整精度值
-	return []float64{
+	return Matrix3x3{
 		3.2404542, -1.5371385, -0.4985314,
 		-0.9692660, 1.8760108, 0.0415560,
 		0.0556434, -0.2040259, 1.0572252,
 	}
 }
 
-// GetCameraCalibration1ForDNG 获取 DNG CameraCalibration1 (对角矩阵)
+// GetCameraCalibration1 获取 DNG CameraCalibration1 (对角矩阵)
 // 包含白平衡增益信息，简单的增益倒数
-func GetCameraCalibration1ForDNG(gain [3]float64) []float64 {
+func GetCameraCalibration1(gain Vector3) Matrix3x3 {
 	// 对角矩阵：1/gain
-	return []float64{
+	return Matrix3x3{
 		1.0 / gain[0], 0, 0,
 		0, 1.0 / gain[1], 0,
 		0, 0, 1.0 / gain[2],
 	}
 }
 
-// GetD65ToD50Matrix 获取 Bradford 色适应矩阵 (D65 → D50)
-func GetD65ToD50Matrix() []float64 {
+// 获取 Bradford 色适应矩阵 (D65 → D50)
+func GetD65ToD50() Matrix3x3 {
 	// Bradford chromatic adaptation matrix from D65 to D50
-	return []float64{
+	return Matrix3x3{
 		1.0478112, 0.0228866, -0.0501270,
 		0.0295424, 0.9904844, -0.0170491,
 		-0.0092345, 0.0150436, 0.7521316,
 	}
 }
 
-// GetForwardMatrix1ForDNG 获取 DNG ForwardMatrix1
+// GetForwardMatrix1 获取 DNG ForwardMatrix1
 // ForwardMatrix1 = D65_to_D50 × bmt_to_xyz
 // 其中 bmt_to_xyz = sRGB_to_XYZ × ColorCorrections
-func (f *File) GetForwardMatrix1ForDNG(wb string) ([]float64, bool) {
+func (f *File) GetForwardMatrix1(wb string) (Matrix3x3, bool) {
 	bmtToXYZ, ok := f.GetBMTToXYZ(wb)
 	if !ok {
-		return nil, false
+		return Identity3x3(), false
 	}
 
-	d65ToD50 := GetD65ToD50Matrix()
-	forwardMatrix := multiply3x3(d65ToD50, bmtToXYZ)
+	d65ToD50 := GetD65ToD50()
+	forwardMatrix := d65ToD50.Multiply(bmtToXYZ)
 
 	return forwardMatrix, true
 }
 
-// GetBMTToXYZ 获取 BMT 到 XYZ 的转换矩阵
-func (f *File) GetBMTToXYZ(wb string) ([]float64, bool) {
+// 获取 BMT 到 XYZ 的转换矩阵，返回 Matrix3x3 类型
+func (f *File) GetBMTToXYZ(wb string) (Matrix3x3, bool) {
 	// sRGB -> XYZ 标准矩阵
-	sRGBToXYZ := GetSRGBToXYZMatrix()
+	sRGBToXYZ := GetSRGBToXYZ()
 
 	// 尝试从 WhiteBalanceColorCorrections 获取
-	if ccMatrix, ok := f.GetCAMFMatrixForWB("WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
-		return multiply3x3(sRGBToXYZ, ccMatrix), true
+	if ccMatrixSlice, ok := f.GetCAMFMatrixForWB("WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
+		var ccMatrix Matrix3x3
+		copy(ccMatrix[:], ccMatrixSlice)
+		return sRGBToXYZ.Multiply(ccMatrix), true
 	}
 
-	if ccMatrix, ok := f.GetCAMFMatrixForWB("DP1_WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
-		return multiply3x3(sRGBToXYZ, ccMatrix), true
+	if ccMatrixSlice, ok := f.GetCAMFMatrixForWB("DP1_WhiteBalanceColorCorrections", wb, []uint32{3, 3}); ok {
+		var ccMatrix Matrix3x3
+		copy(ccMatrix[:], ccMatrixSlice)
+		return sRGBToXYZ.Multiply(ccMatrix), true
 	}
 
 	// 旧式方法: WhiteBalanceIlluminants + WhiteBalanceCorrections
-	if camToXYZ, ok1 := f.GetCAMFMatrixForWB("WhiteBalanceIlluminants", wb, []uint32{3, 3}); ok1 {
-		if wbCorrection, ok2 := f.GetCAMFMatrixForWB("WhiteBalanceCorrections", wb, []uint32{3, 3}); ok2 {
+	if camToXYZSlice, ok1 := f.GetCAMFMatrixForWB("WhiteBalanceIlluminants", wb, []uint32{3, 3}); ok1 {
+		if wbCorrectionSlice, ok2 := f.GetCAMFMatrixForWB("WhiteBalanceCorrections", wb, []uint32{3, 3}); ok2 {
 			// raw_to_xyz = wb_correction * cam_to_xyz
-			rawToXYZ := multiply3x3(wbCorrection, camToXYZ)
+			var wbCorrection, camToXYZ Matrix3x3
+			copy(wbCorrection[:], wbCorrectionSlice)
+			copy(camToXYZ[:], camToXYZSlice)
+			rawToXYZ := wbCorrection.Multiply(camToXYZ)
 
 			// raw_neutral
 			rawNeutral := getRawNeutral(rawToXYZ)
 
 			// raw_neutral_mat (对角矩阵)
-			rawNeutralMat := make([]float64, 9)
-			rawNeutralMat[0] = rawNeutral[0]
-			rawNeutralMat[4] = rawNeutral[1]
-			rawNeutralMat[8] = rawNeutral[2]
+			rawNeutralMat := Diagonal3x3(rawNeutral)
 
 			// bmt_to_xyz = raw_to_xyz * raw_neutral_mat
-			return multiply3x3(rawToXYZ, rawNeutralMat), true
+			bmtToXYZMat := rawToXYZ.Multiply(rawNeutralMat)
+			return bmtToXYZMat, true
 		}
 	}
 
-	return nil, false
+	return Identity3x3(), false
 }
 
-// GetCAMFRect 获取 CAMF 中定义的矩形区域
+// 获取 CAMF 中定义的矩形区域
 func (f *File) GetCAMFRect(name string) (x0, y0, x1, y1 uint32, ok bool) {
 	if f.CAMFSection == nil {
 		return 0, 0, 0, 0, false
@@ -1541,7 +1488,7 @@ type SpatialGainCorr struct {
 	ColOff   int       // 列偏移
 }
 
-// GetSpatialGain 获取 Spatial Gain 数据用于 DNG Opcode List 2
+// 获取 Spatial Gain 数据用于 DNG Opcode List 2
 func (f *File) GetSpatialGain(wb string) []SpatialGainCorr {
 	var result []SpatialGainCorr
 
@@ -1600,14 +1547,14 @@ type merrillGainBlock struct {
 	name     string
 	x        float64 // 1/aperture
 	y        float64 // lens position
-	minGains [3]float64
-	deltas   [3]float64
+	minGains Vector3
+	deltas   Vector3
 	gains    [3][]uint32 // 压缩的 gain 数据
 	rows     [3]int      // 每个通道可能有不同的尺寸
 	cols     [3]int
 }
 
-// getMerrillTypeSpatialGain 获取 Merrill 类型相机的 Spatial Gain（使用四点双线性插值）
+// 获取 Merrill 类型相机的 Spatial Gain（使用四点双线性插值）
 func (f *File) getMerrillTypeSpatialGain() []SpatialGainCorr {
 	// 1. 获取光圈值
 	captureAperture := 0.0
@@ -1924,7 +1871,7 @@ func (f *File) getMerrillTypeSpatialGain() []SpatialGainCorr {
 	return result
 }
 
-// convertSpatialGain 将 float64 数据转换为 float32
+// 将 float64 数据转换为 float32
 func convertSpatialGain(data []float64, dims []uint32) *SpatialGainCorr {
 	if len(dims) != 3 {
 		return nil
@@ -1945,100 +1892,75 @@ func convertSpatialGain(data []float64, dims []uint32) *SpatialGainCorr {
 	}
 }
 
-// GetSRGBToXYZMatrix 获取 sRGB 到 XYZ 的标准矩阵
+// GetSRGBToXYZ 获取 sRGB 到 XYZ 的标准矩阵
 // 使用 sRGB 标准的完整精度值
-func GetSRGBToXYZMatrix() []float64 {
-	return []float64{
+func GetSRGBToXYZ() Matrix3x3 {
+	return Matrix3x3{
 		0.4124564, 0.3575761, 0.1804375,
 		0.2126729, 0.7151522, 0.0721750,
 		0.0193339, 0.1191920, 0.9503041,
 	}
 }
 
+// GetSRGBToXYZMatrix 获取 sRGB 到 XYZ 的标准矩阵，返回切片格式
 // GetRawToXYZ 获取 raw_to_xyz 矩阵 (包含白平衡增益)
 // C 代码: x3f_get_raw_to_xyz = bmt_to_xyz × diag(gain)
-func (f *File) GetRawToXYZ(wb string) ([]float64, bool) {
+// 获取 raw_to_xyz 矩阵 (包含白平衡增益)，返回 Matrix3x3 类型
+func (f *File) GetRawToXYZ(wb string) (Matrix3x3, bool) {
 	// 获取 bmt_to_xyz
 	bmtToXYZ, ok := f.GetBMTToXYZ(wb)
 	if !ok {
-		return nil, false
+		return Identity3x3(), false
 	}
 
 	// 获取白平衡增益
 	gain, ok := f.GetWhiteBalanceGain(wb)
 	if !ok {
-		return nil, false
+		return Identity3x3(), false
 	}
 
 	// 构造增益对角矩阵
-	gainMat := []float64{
-		gain[0], 0, 0,
-		0, gain[1], 0,
-		0, 0, gain[2],
-	}
+	gainVec := Vector3(gain)
+	gainMat := Diagonal3x3(gainVec)
 
 	// raw_to_xyz = bmt_to_xyz × gain_mat
-	return multiply3x3(bmtToXYZ, gainMat), true
+	rawToXYZMat := bmtToXYZ.Multiply(gainMat)
+	return rawToXYZMat, true
 }
 
 // GetForwardMatrixWithSRGB 获取基于 sRGB 标准矩阵的 ForwardMatrix1
 // 用于 "Unconverted" 和 "Linear sRGB" profiles
-func GetForwardMatrixWithSRGB() []float64 {
-	sRGBToXYZ := GetSRGBToXYZMatrix()
-	d65ToD50 := GetD65ToD50Matrix()
-	return multiply3x3(d65ToD50, sRGBToXYZ)
+func GetForwardMatrixWithSRGB() Matrix3x3 {
+	sRGBToXYZ := GetSRGBToXYZ()
+	d65ToD50 := GetD65ToD50()
+	return d65ToD50.Multiply(sRGBToXYZ)
 }
 
 // GetForwardMatrixGrayscale 获取灰度模式的 ForwardMatrix1
 // grayscaleMix: [R, G, B] 权重数组，例如 [1/3, 1/3, 1/3] 或 [2, -1, 0]
-func GetForwardMatrixGrayscale(grayscaleMix [3]float64) []float64 {
+func GetForwardMatrixGrayscale(grayscaleMix Vector3) Matrix3x3 {
 	// D50 白点 XYZ 值
-	d50XYZ := [3]float64{0.96422, 1.00000, 0.82521}
+	d50XYZ := Vector3{0.96422, 1.00000, 0.82521}
 
 	// 创建对角矩阵 diag(grayscaleMix)
-	grayscaleMixMat := [9]float64{
-		grayscaleMix[0], 0, 0,
-		0, grayscaleMix[1], 0,
-		0, 0, grayscaleMix[2],
-	}
+	grayscaleMixVec := Vector3(grayscaleMix)
+	grayscaleMixMat := Diagonal3x3(grayscaleMixVec)
 
 	// 创建全 1 矩阵
-	ones := [9]float64{
+	ones := Matrix3x3{
 		1, 1, 1,
 		1, 1, 1,
 		1, 1, 1,
 	}
 
 	// bmt_to_grayscale = ones × grayscale_mix_mat
-	bmtToGrayscale := [9]float64{}
-	for i := 0; i < 3; i++ {
-		for j := 0; j < 3; j++ {
-			sum := 0.0
-			for k := 0; k < 3; k++ {
-				sum += ones[i*3+k] * grayscaleMixMat[k*3+j]
-			}
-			bmtToGrayscale[i*3+j] = sum
-		}
-	}
+	bmtToGrayscale := ones.Multiply(grayscaleMixMat)
 
 	// 创建对角矩阵 diag(d50_xyz)
-	d50XYZMat := [9]float64{
-		d50XYZ[0], 0, 0,
-		0, d50XYZ[1], 0,
-		0, 0, d50XYZ[2],
-	}
+	d50XYZMat := Diagonal3x3(d50XYZ)
 
 	// bmt_to_d50 = d50_xyz_mat × bmt_to_grayscale
-	result := make([]float64, 9)
-	for i := 0; i < 3; i++ {
-		for j := 0; j < 3; j++ {
-			sum := 0.0
-			for k := 0; k < 3; k++ {
-				sum += d50XYZMat[i*3+k] * bmtToGrayscale[k*3+j]
-			}
-			result[i*3+j] = sum
-		}
-	}
+	result := d50XYZMat.Multiply(bmtToGrayscale)
 
 	return result
 }

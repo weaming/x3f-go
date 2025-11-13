@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"sort"
+
+	"github.com/weaming/x3f-go/x3f"
 )
 
 // IFDWriter 自动管理 IFD 标签和数据偏移的写入器
@@ -26,7 +28,7 @@ type TagEntry struct {
 	data  []uint32 // 统一用 uint32 数组存储(包括 RATIONAL = 2个uint32)
 }
 
-// NewIFDWriter 创建新的 IFD 写入器
+// 创建新的 IFD 写入器
 func NewIFDWriter(file *os.File) *IFDWriter {
 	pos, _ := file.Seek(0, io.SeekCurrent)
 	return &IFDWriter{
@@ -36,7 +38,7 @@ func NewIFDWriter(file *os.File) *IFDWriter {
 	}
 }
 
-// byteSizeForType 返回每个数据类型的字节大小
+// 返回每个数据类型的字节大小
 func byteSizeForType(typ uint16) int {
 	switch typ {
 	case TypeByte, TypeASCII, TypeUndefined:
@@ -50,7 +52,7 @@ func byteSizeForType(typ uint16) int {
 	}
 }
 
-// putData 将 uint32 数组写入字节缓冲区
+// 将 uint32 数组写入字节缓冲区
 func (e *TagEntry) putData(p []byte) {
 	for _, d := range e.data {
 		switch e.typ {
@@ -67,7 +69,7 @@ func (e *TagEntry) putData(p []byte) {
 	}
 }
 
-// AddShort 添加 SHORT 类型标签
+// 添加 SHORT 类型标签
 func (w *IFDWriter) AddShort(tag uint16, value uint16) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -77,7 +79,7 @@ func (w *IFDWriter) AddShort(tag uint16, value uint16) {
 	})
 }
 
-// AddShortArray 添加 SHORT 数组
+// 添加 SHORT 数组
 func (w *IFDWriter) AddShortArray(tag uint16, values []uint16) {
 	data := make([]uint32, len(values))
 	for i, v := range values {
@@ -91,7 +93,7 @@ func (w *IFDWriter) AddShortArray(tag uint16, values []uint16) {
 	})
 }
 
-// AddLong 添加 LONG 类型标签
+// 添加 LONG 类型标签
 func (w *IFDWriter) AddLong(tag uint16, value uint32) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -101,7 +103,7 @@ func (w *IFDWriter) AddLong(tag uint16, value uint32) {
 	})
 }
 
-// AddLongArray 添加 LONG 数组
+// 添加 LONG 数组
 func (w *IFDWriter) AddLongArray(tag uint16, values []uint32) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -111,7 +113,7 @@ func (w *IFDWriter) AddLongArray(tag uint16, values []uint32) {
 	})
 }
 
-// AddByte 添加 BYTE 类型标签(4个字节内联)
+// 添加 BYTE 类型标签(4个字节内联)
 func (w *IFDWriter) AddByte(tag uint16, value uint32) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -121,7 +123,7 @@ func (w *IFDWriter) AddByte(tag uint16, value uint32) {
 	})
 }
 
-// AddASCII 添加 ASCII 字符串
+// 添加 ASCII 字符串
 func (w *IFDWriter) AddASCII(tag uint16, str string, length int) {
 	data := make([]uint32, length)
 	for i := 0; i < len(str) && i < length; i++ {
@@ -135,7 +137,7 @@ func (w *IFDWriter) AddASCII(tag uint16, str string, length int) {
 	})
 }
 
-// AddRational 添加 RATIONAL(2个 uint32: 分子/分母)
+// 添加 RATIONAL(2个 uint32: 分子/分母)
 func (w *IFDWriter) AddRational(tag uint16, numerator, denominator uint32) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -145,7 +147,7 @@ func (w *IFDWriter) AddRational(tag uint16, numerator, denominator uint32) {
 	})
 }
 
-// AddRationalArray 添加 RATIONAL 数组
+// 添加 RATIONAL 数组
 func (w *IFDWriter) AddRationalArray(tag uint16, values [][2]uint32) {
 	data := make([]uint32, len(values)*2)
 	for i, v := range values {
@@ -160,7 +162,7 @@ func (w *IFDWriter) AddRationalArray(tag uint16, values [][2]uint32) {
 	})
 }
 
-// AddSRational 添加 SRATIONAL(signed)
+// 添加 SRATIONAL(signed)
 func (w *IFDWriter) AddSRational(tag uint16, numerator, denominator int32) {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -170,7 +172,7 @@ func (w *IFDWriter) AddSRational(tag uint16, numerator, denominator int32) {
 	})
 }
 
-// AddSRationalArray 添加 SRATIONAL 数组
+// 添加 SRATIONAL 数组
 func (w *IFDWriter) AddSRationalArray(tag uint16, values [][2]int32) {
 	data := make([]uint32, len(values)*2)
 	for i, v := range values {
@@ -185,7 +187,7 @@ func (w *IFDWriter) AddSRationalArray(tag uint16, values [][2]int32) {
 	})
 }
 
-// AddRationalFromFloat 从浮点数添加 RATIONAL
+// 从浮点数添加 RATIONAL
 func (w *IFDWriter) AddRationalFromFloat(tag uint16, value float64, signed bool) {
 	num, denom := floatToRational(value, 1000000000)
 	if signed {
@@ -195,7 +197,7 @@ func (w *IFDWriter) AddRationalFromFloat(tag uint16, value float64, signed bool)
 	}
 }
 
-// AddRationalArrayFromFloats 从浮点数数组添加 RATIONAL 数组
+// 从浮点数数组添加 RATIONAL 数组
 func (w *IFDWriter) AddRationalArrayFromFloats(tag uint16, values []float64, signed bool) {
 	// 使用 2^26 作为最大分母，与 C 版本 libtiff 的行为接近
 	// 这样可以避免过大的分子/分母导致精度损失
@@ -218,7 +220,49 @@ func (w *IFDWriter) AddRationalArrayFromFloats(tag uint16, values []float64, sig
 	}
 }
 
-// AddUndefined 添加 UNDEFINED 类型数据
+// 添加 Matrix3x3 作为 RATIONAL 或 SRATIONAL 数组
+func (w *IFDWriter) AddRationalArrayFromMatrix(tag uint16, matrix x3f.Matrix3x3, signed bool) {
+	const maxDenom = 67108864 // 2^26
+
+	if signed {
+		svals := make([][2]int32, 9)
+		for i := 0; i < 9; i++ {
+			num, denom := floatToRational(matrix[i], maxDenom)
+			svals[i] = [2]int32{int32(num), int32(denom)}
+		}
+		w.AddSRationalArray(tag, svals)
+	} else {
+		uvals := make([][2]uint32, 9)
+		for i := 0; i < 9; i++ {
+			num, denom := floatToRational(matrix[i], maxDenom)
+			uvals[i] = [2]uint32{uint32(num), uint32(denom)}
+		}
+		w.AddRationalArray(tag, uvals)
+	}
+}
+
+// 添加 Vector3 作为 RATIONAL 或 SRATIONAL 数组
+func (w *IFDWriter) AddRationalArrayFromVector3(tag uint16, vec x3f.Vector3, signed bool) {
+	const maxDenom = 67108864 // 2^26
+
+	if signed {
+		svals := make([][2]int32, 3)
+		for i := 0; i < 3; i++ {
+			num, denom := floatToRational(vec[i], maxDenom)
+			svals[i] = [2]int32{int32(num), int32(denom)}
+		}
+		w.AddSRationalArray(tag, svals)
+	} else {
+		uvals := make([][2]uint32, 3)
+		for i := 0; i < 3; i++ {
+			num, denom := floatToRational(vec[i], maxDenom)
+			uvals[i] = [2]uint32{uint32(num), uint32(denom)}
+		}
+		w.AddRationalArray(tag, uvals)
+	}
+}
+
+// 添加 UNDEFINED 类型数据
 func (w *IFDWriter) AddUndefined(tag uint16, data []byte) {
 	uintData := make([]uint32, len(data))
 	for i, b := range data {
@@ -232,7 +276,7 @@ func (w *IFDWriter) AddUndefined(tag uint16, data []byte) {
 	})
 }
 
-// ReservePointer 预留一个指针位置(返回 entry 索引)
+// 预留一个指针位置(返回 entry 索引)
 func (w *IFDWriter) ReservePointer(tag uint16) int {
 	w.entries = append(w.entries, &TagEntry{
 		tag:   tag,
@@ -243,7 +287,7 @@ func (w *IFDWriter) ReservePointer(tag uint16) int {
 	return len(w.entries) - 1
 }
 
-// UpdatePointer 更新预留的指针值
+// 更新预留的指针值
 func (w *IFDWriter) UpdatePointer(index int, offset uint32) error {
 	if index < 0 || index >= len(w.entries) {
 		return nil // 忽略错误,保持兼容
@@ -252,7 +296,7 @@ func (w *IFDWriter) UpdatePointer(index int, offset uint32) error {
 	return nil
 }
 
-// Write 写入 IFD 和所有数据(借鉴 chai2010/tiff 的两阶段写入)
+// 写入 IFD 和所有数据(借鉴 chai2010/tiff 的两阶段写入)
 func (w *IFDWriter) Write() (int64, error) {
 	// 按 tag 升序排序
 	sort.Slice(w.entries, func(i, j int) bool {
@@ -333,7 +377,7 @@ func (w *IFDWriter) Write() (int64, error) {
 	return w.file.Seek(0, io.SeekCurrent)
 }
 
-// GetCurrentPosition 获取 IFD 写入后的预期文件位置
+// 获取 IFD 写入后的预期文件位置
 func (w *IFDWriter) GetCurrentPosition() int64 {
 	numEntries := uint16(len(w.entries))
 	ifdSize := int64(2 + numEntries*12 + 4)
