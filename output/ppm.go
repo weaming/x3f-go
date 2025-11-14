@@ -7,28 +7,6 @@ import (
 	"github.com/weaming/x3f-go/x3f"
 )
 
-// 导出为 PPM 格式（用于调试）
-func ExportPPM(img *x3f.ProcessedImage, outputPath string) error {
-	f, err := os.Create(outputPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	// 写入 PPM 头部
-	fmt.Fprintf(f, "P3\n%d %d\n65535\n", img.Width, img.Height)
-
-	// 写入像素数据（float64 [0,1] -> uint16 [0,65535]）
-	for i := 0; i < len(img.Data); i += 3 {
-		r := uint16(img.Data[i] * 65535.0)
-		g := uint16(img.Data[i+1] * 65535.0)
-		b := uint16(img.Data[i+2] * 65535.0)
-		fmt.Fprintf(f, "%d %d %d\n", r, g, b)
-	}
-
-	return nil
-}
-
 // ExportRawPPM 导出未处理的 RAW 数据为 PPM 格式（用于调试）
 // noCrop=true 时输出完整未裁剪的数据
 // 对于 Quattro 格式，会执行 expand（匹配 C 版本 -unprocessed 行为），但不做预处理
@@ -138,8 +116,8 @@ func ExportPreprocessedPPM(imageSection *x3f.ImageSection, file *x3f.File, outpu
 		return err
 	}
 
-	// 提取预处理后的数据
-	dataToUse := preprocessed.Data
+	// 提取预处理后的数据（intermediate 格式）
+	dataToUse := preprocessed.DataUint16
 	decodedWidth := preprocessed.Width
 	decodedHeight := preprocessed.Height
 	isExpanded := preprocessed.IsExpanded

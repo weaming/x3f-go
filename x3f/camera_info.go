@@ -16,9 +16,9 @@ type CameraInfo struct {
 	Serial string // 相机序列号
 
 	// 色彩信息
-	ColorMatrix    Matrix3x3 // 色彩矩阵 (RAW → XYZ)
-	WhiteBalance   Vector3   // 白平衡增益
-	WhiteBalanceWB string    // 白平衡类型名称
+	ColorMatrix  Matrix3x3 // 色彩矩阵 (RAW → XYZ)
+	WBGain       Vector3   // 白平衡增益
+	WhiteBalance string    // 白平衡类型名称
 
 	// 曝光信息
 	BaselineExposure float64 // 基线曝光
@@ -35,8 +35,8 @@ type ExifInfo struct {
 }
 
 // ExtractCameraInfo 从 X3F 文件中提取相机信息
-func ExtractCameraInfo(file *File, whiteBalance string) CameraInfo {
-	info := CameraInfo{}
+func ExtractCameraInfo(file *File, wb string) CameraInfo {
+	info := CameraInfo{WhiteBalance: wb}
 
 	// 获取相机型号
 	if model, ok := file.GetProperty("CAMMODEL"); ok {
@@ -50,13 +50,6 @@ func ExtractCameraInfo(file *File, whiteBalance string) CameraInfo {
 		info.Serial = serial
 	}
 
-	// 获取白平衡
-	wb := whiteBalance
-	if wb == "" {
-		wb = file.GetWhiteBalance()
-	}
-	info.WhiteBalanceWB = wb
-
 	// 获取色彩矩阵
 	if matrix, ok := file.GetColorMatrix(wb); ok {
 		info.ColorMatrix = matrix
@@ -66,9 +59,9 @@ func ExtractCameraInfo(file *File, whiteBalance string) CameraInfo {
 
 	// 获取白平衡增益
 	if gain, ok := file.GetWhiteBalanceGain(wb); ok {
-		info.WhiteBalance = gain
+		info.WBGain = gain
 	} else {
-		info.WhiteBalance = DefaultWhiteBalanceGain
+		info.WBGain = DefaultWhiteBalanceGain
 	}
 
 	// 默认基线曝光

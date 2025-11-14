@@ -10,13 +10,37 @@ import (
 	"github.com/weaming/x3f-go/x3f"
 )
 
-// JPEGOptions JPEG 输出选项
-type JPEGOptions struct {
-	Quality int // 1-100, 默认 98
+// ExportJPEG 从 CommonData 导出 JPEG
+func ExportJPEG(c *CommonData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
+	// 验证 JPEG 质量参数
+	quality := config.Quality
+	if quality < 1 || quality > 100 {
+		return fmt.Errorf("JPEG 质量必须在 1-100 之间，当前值: %d", quality)
+	}
+
+	// 应用后处理（曝光补偿、色调映射、gamma）
+	img := applyPostProcessing(c.ImgData, c.Dims, config)
+
+	logger.Step("写入 JPEG")
+	if config.Verbose {
+		fmt.Printf("写入 JPEG 文件: %s\n", filename)
+	}
+
+	err := WriteJPEG(img, filename, &jpeg.Options{Quality: quality})
+	if err != nil {
+		return err
+	}
+
+	logger.Done("完成")
+	return nil
 }
 
 // 写入 JPEG 文件
-func WriteJPEG(img *x3f.ProcessedImage, filename string, opts JPEGOptions) error {
+func WriteJPEG(img *x3f.ProcessedImage, filename string, opts *jpeg.Options) error {
+	if img == nil {
+		return fmt.Errorf("图像为空")
+	}
+
 	// 创建 Go 标准库的 image.Image
 	rgbaImg := image.NewRGBA(image.Rect(0, 0, int(img.Width), int(img.Height)))
 
@@ -49,21 +73,6 @@ func WriteJPEG(img *x3f.ProcessedImage, filename string, opts JPEGOptions) error
 	}
 	defer file.Close()
 
-	// 设置质量
-	quality := opts.Quality
-	if quality <= 0 || quality > 100 {
-		quality = 98
-	}
-
 	// 编码 JPEG
-	return jpeg.Encode(file, rgbaImg, &jpeg.Options{Quality: quality})
-}
-
-// 导出为 JPEG
-func ExportJPEG(img *x3f.ProcessedImage, filename string, opts JPEGOptions) error {
-	if img == nil {
-		return fmt.Errorf("图像为空")
-	}
-
-	return WriteJPEG(img, filename, opts)
+	return jpeg.Encode(file, rgbaImg, opts)
 }

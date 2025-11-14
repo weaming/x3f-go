@@ -10,7 +10,6 @@
 # 此脚本只编译当前平台的多架构版本：
 # - macOS: Universal Binary (arm64 + amd64)
 # - Linux: amd64 和 arm64（如果支持）
-# - Windows: amd64
 
 set ROOT (cd (dirname (status -f)) && pwd)
 set BUILD_DIR "$ROOT/build/release"
@@ -148,30 +147,9 @@ switch $OS
             echo "[2/2] 跳过 linux/arm64 (需要 aarch64-linux-gnu-gcc)"
         end
 
-    case 'MINGW*' 'MSYS*' 'CYGWIN*'
-        # ===== Windows =====
-        echo "平台: Windows"
-        echo ""
-
-        echo "[1/1] 编译 windows/amd64..."
-        begin
-            set -lx GOOS windows
-            set -lx GOARCH amd64
-            set -lx CGO_ENABLED 1
-            go build -ldflags="$LDFLAGS -linkmode external -extldflags '-static'" \
-                -tags 'osusergo netgo static_build' \
-                -o $BUILD_DIR/x3f-go-windows-amd64.exe $CMD_PATH
-        end
-
-        if test $status -eq 0
-            echo "  ✅ windows/amd64 编译成功"
-        else
-            echo "  ❌ windows/amd64 编译失败"
-            exit 1
-        end
-
     case '*'
         echo "❌ 不支持的操作系统: $OS"
+        echo "仅支持 macOS 和 Linux"
         exit 1
 end
 
@@ -209,21 +187,13 @@ switch $OS
         end
         echo ""
         echo "如需其他平台："
-        echo "  - Linux:   在 Linux 机器上运行此脚本"
-        echo "  - Windows: 在 Windows 机器上运行此脚本"
-        echo "  - 或使用 GitHub Actions / Docker 进行跨平台构建"
+        echo "  - Linux: 在 Linux 机器上运行此脚本"
+        echo "  - 或使用 GitHub Actions 进行跨平台构建"
     case Linux
         echo "已编译: Linux 版本"
         echo ""
         echo "如需其他平台："
-        echo "  - macOS:   在 macOS 机器上运行此脚本"
-        echo "  - Windows: 在 Windows 机器上运行此脚本"
-    case '*'
-        echo "已编译: Windows 版本"
-        echo ""
-        echo "如需其他平台："
         echo "  - macOS: 在 macOS 机器上运行此脚本"
-        echo "  - Linux: 在 Linux 机器上运行此脚本"
 end
 
 echo ""

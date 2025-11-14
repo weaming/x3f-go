@@ -11,8 +11,6 @@ bin/
 *.jpg
 *.jpeg
 *.png
-*.heif
-*.heic
 
 # Go
 *.test

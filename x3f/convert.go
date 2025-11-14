@@ -269,15 +269,6 @@ func SimpleExposure(color Vector3, exposure float64) Vector3 {
 	}
 }
 
-// 将浮点 RGB 转换为 16-bit 整数
-func ConvertToUint16(rgb Vector3) [3]uint16 {
-	return [3]uint16{
-		uint16(math.Min(65535, math.Max(0, rgb[0]*65535+0.5))),
-		uint16(math.Min(65535, math.Max(0, rgb[1]*65535+0.5))),
-		uint16(math.Min(65535, math.Max(0, rgb[2]*65535+0.5))),
-	}
-}
-
 // 将浮点 RGB 转换为 8-bit 整数
 func ConvertToUint8(rgb Vector3) [3]uint8 {
 	return [3]uint8{

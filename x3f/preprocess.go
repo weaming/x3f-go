@@ -7,8 +7,8 @@ import (
 
 // PreprocessedData 包含预处理后的数据和相关参数
 type PreprocessedData struct {
-	// 处理后的数据
-	Data []uint16
+	// 处理后的数据（uint16 intermediate 或 float64 XYZ）
+	DataUint16 []uint16 // intermediate 格式（IsXYZ=false 时有效）
 	// 数据尺寸
 	Width  uint32
 	Height uint32
@@ -16,10 +16,12 @@ type PreprocessedData struct {
 	IsExpanded bool
 	// 是否已转换为 XYZ 色彩空间
 	IsXYZ bool
-	// Intermediate levels（用于色彩转换）
+	// Intermediate levels（用于色彩转换，仅当 IsXYZ=false 时有效）
 	IntermediateBias float64
 	MaxIntermediate  [3]uint32
 	BlackLevel       BlackLevelInfo
+	// 白平衡类型
+	WhiteBalance string
 }
 
 // PreprocessImage 对图像进行预处理，包括 Quattro expand（如果适用）
@@ -280,10 +282,11 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 	}
 
 	return &PreprocessedData{
-		Data:             dataToUse,
+		DataUint16:       dataToUse,
 		Width:            width,
 		Height:           height,
 		IsExpanded:       isExpanded,
+		IsXYZ:            false,
 		IntermediateBias: intermediateBias,
 		MaxIntermediate:  maxIntermediate,
 		BlackLevel:       blackLevel,

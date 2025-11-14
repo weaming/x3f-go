@@ -66,6 +66,10 @@ type IFDEntry struct {
 
 // 写入 TIFF 文件
 func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error {
+	if img == nil {
+		return fmt.Errorf("图像为空")
+	}
+
 	use16Bit := opts.Use16Bit
 	file, err := os.Create(filename)
 	if err != nil {
@@ -326,11 +330,29 @@ type TIFFOptions struct {
 	Exif     x3f.ExifInfo // EXIF 拍摄参数
 }
 
-// 导出为 TIFF
-func ExportTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error {
-	if img == nil {
-		return fmt.Errorf("图像为空")
+// ExportTIFF 从 CommonData 导出 TIFF
+func ExportTIFF(c *CommonData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
+	// 应用后处理（曝光补偿、色调映射、gamma）
+	img := applyPostProcessing(c.ImgData, c.Dims, config)
+
+	// 提取 EXIF 元数据
+	exif := x3f.ExtractExifInfo(x3fFile)
+
+	tiffOpts := TIFFOptions{
+		Use16Bit: true,
+		Exif:     exif,
 	}
 
-	return WriteTIFF(img, filename, opts)
+	logger.Step("写入 TIFF")
+	if config.Verbose {
+		fmt.Printf("写入 TIFF 文件: %s\n", filename)
+	}
+
+	err := WriteTIFF(img, filename, tiffOpts)
+	if err != nil {
+		return err
+	}
+
+	logger.Done("完成")
+	return nil
 }

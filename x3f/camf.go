@@ -610,21 +610,6 @@ func (f *File) decodeMatrixData(entry *CAMFEntry) error {
 	return nil
 }
 
-// 获取文本条目
-func (f *File) GetCAMFText(name string) (string, bool) {
-	if f.CAMFSection == nil {
-		return "", false
-	}
-
-	for _, entry := range f.CAMFSection.Entries {
-		if entry.Name == name && entry.ID == CMbT {
-			return entry.Text, true
-		}
-	}
-
-	return "", false
-}
-
 // 获取属性值
 func (f *File) GetCAMFProperty(listName, propName string) (string, bool) {
 	if f.CAMFSection == nil {

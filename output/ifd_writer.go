@@ -197,29 +197,6 @@ func (w *IFDWriter) AddRationalFromFloat(tag uint16, value float64, signed bool)
 	}
 }
 
-// 从浮点数数组添加 RATIONAL 数组
-func (w *IFDWriter) AddRationalArrayFromFloats(tag uint16, values []float64, signed bool) {
-	// 使用 2^26 作为最大分母，与 C 版本 libtiff 的行为接近
-	// 这样可以避免过大的分子/分母导致精度损失
-	const maxDenom = 67108864 // 2^26
-
-	if signed {
-		svals := make([][2]int32, len(values))
-		for i, v := range values {
-			num, denom := floatToRational(v, maxDenom)
-			svals[i] = [2]int32{int32(num), int32(denom)}
-		}
-		w.AddSRationalArray(tag, svals)
-	} else {
-		uvals := make([][2]uint32, len(values))
-		for i, v := range values {
-			num, denom := floatToRational(v, maxDenom)
-			uvals[i] = [2]uint32{uint32(num), uint32(denom)}
-		}
-		w.AddRationalArray(tag, uvals)
-	}
-}
-
 // 添加 Matrix3x3 作为 RATIONAL 或 SRATIONAL 数组
 func (w *IFDWriter) AddRationalArrayFromMatrix(tag uint16, matrix x3f.Matrix3x3, signed bool) {
 	const maxDenom = 67108864 // 2^26
@@ -285,15 +262,6 @@ func (w *IFDWriter) ReservePointer(tag uint16) int {
 		data:  []uint32{0}, // 占位符
 	})
 	return len(w.entries) - 1
-}
-
-// 更新预留的指针值
-func (w *IFDWriter) UpdatePointer(index int, offset uint32) error {
-	if index < 0 || index >= len(w.entries) {
-		return nil // 忽略错误,保持兼容
-	}
-	w.entries[index].data[0] = offset
-	return nil
 }
 
 // 写入 IFD 和所有数据(借鉴 chai2010/tiff 的两阶段写入)

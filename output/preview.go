@@ -2,7 +2,6 @@ package output
 
 import (
 	"encoding/binary"
-	"fmt"
 
 	"github.com/weaming/x3f-go/x3f"
 )
@@ -17,26 +16,26 @@ type PreviewParams struct {
 	convMatrix    x3f.Matrix3x3
 }
 
-// 从全分辨率 16-bit Linear Raw 图像生成 8-bit sRGB 预览图
-func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint32, x3fFile *x3f.File, wb string) ([]byte, uint32, uint32) {
-	params := preparePreviewParams(width, height, maxWidth, x3fFile, wb)
+// 从全分辨率 16-bit linear sRGB 图像生成 8-bit sRGB 预览图
+// imageData: 已经转换为 XYZ 色彩空间的图像数据 (uint16, 范围 0-65535)
+func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint32) ([]byte, uint32, uint32) {
+	params := preparePreviewParams(width, height, maxWidth)
 	previewData := make([]byte, params.previewWidth*params.previewHeight*3)
 	processPreviewPixels(imageData, width, previewData, params)
 	return previewData, params.previewWidth, params.previewHeight
 }
 
 // 准备预览图生成参数
-func preparePreviewParams(width, height, maxWidth uint32, x3fFile *x3f.File, wb string) PreviewParams {
+func preparePreviewParams(width, height, maxWidth uint32) PreviewParams {
 	reduction := calculateReduction(width, maxWidth)
-	levels := getImageLevelsForWb(x3fFile, wb)
-	convMatrix := buildConversionMatrix(x3fFile, wb)
+	convMatrix := x3f.GetColorMatrix1()
 
 	return PreviewParams{
 		reduction:     reduction,
 		reduction2:    reduction * reduction,
 		previewWidth:  width / reduction,
 		previewHeight: height / reduction,
-		levels:        levels,
+		levels:        stdLevels,
 		convMatrix:    convMatrix,
 	}
 }
@@ -50,74 +49,19 @@ func calculateReduction(width, maxWidth uint32) uint32 {
 	return reduction
 }
 
-// 获取黑白电平
-func getImageLevelsForWb(x3fFile *x3f.File, wb string) x3f.ImageLevels {
-	wbGain, ok := x3fFile.GetWhiteBalanceGain(wb)
-	if !ok {
-		panic(fmt.Errorf("无法获取白平衡增益: %s", wb))
-	}
-
-	levels, ok := x3fFile.GetImageLevelsWithGain(wbGain)
-	if !ok {
-		panic(fmt.Errorf("无法获取图像电平"))
-	}
-	return levels
-}
-
-// 构建色彩转换矩阵
-func buildConversionMatrix(x3fFile *x3f.File, wb string) x3f.Matrix3x3 {
-	rawToXYZ := getRawToXYZMatrix(x3fFile, wb)
-	xyzToSRGB := getXYZToSRGBMatrix()
-	isoScaling := getISOScaling(x3fFile)
-	return combineMatrices(xyzToSRGB, rawToXYZ, isoScaling)
-}
-
-// 获取 RAW -> XYZ 矩阵 (包含白平衡增益)
-func getRawToXYZMatrix(x3fFile *x3f.File, wb string) x3f.Matrix3x3 {
-	rawToXYZ, ok := x3fFile.GetRawToXYZ(wb)
-	if !ok {
-		rawToXYZ = x3f.GetSRGBToXYZ()
-	}
-	return rawToXYZ
-}
-
-// 获取 XYZ -> sRGB 标准矩阵
-func getXYZToSRGBMatrix() x3f.Matrix3x3 {
-	return x3f.GetColorMatrix1()
-}
-
-// 获取 ISO 缩放因子
-func getISOScaling(x3fFile *x3f.File) float64 {
-	sensorISO, ok1 := x3fFile.GetCAMFFloat("SensorISO")
-	captureISO, ok2 := x3fFile.GetCAMFFloat("CaptureISO")
-	if ok1 && ok2 {
-		return captureISO / sensorISO
-	}
-	return 1.0
-}
-
-// 组合转换矩阵并应用 ISO 缩放
-func combineMatrices(xyzToSRGB, rawToXYZ x3f.Matrix3x3, isoScaling float64) x3f.Matrix3x3 {
-	result := xyzToSRGB.Multiply(rawToXYZ)
-	for i := range result {
-		result[i] *= isoScaling
-	}
-	return result
-}
-
-// 处理所有预览图像素
+// 处理所有预览图像素（旧版本，从 uint16）
 func processPreviewPixels(imageData []byte, width uint32, previewData []byte, params PreviewParams) {
 	for row := uint32(0); row < params.previewHeight; row++ {
 		for col := uint32(0); col < params.previewWidth; col++ {
 			input := downsamplePixelBlock(imageData, width, row, col, params)
 			normalized := normalizePixel(input, params.levels)
-			rgb := applyColorConversion(normalized, params.convMatrix)
+			rgb := applyColorConvForPreview(normalized, params.convMatrix)
 			writePixel(previewData, row, col, params.previewWidth, rgb)
 		}
 	}
 }
 
-// 平均下采样像素块
+// 平均下采样像素块（旧版本，从 uint16）
 func downsamplePixelBlock(imageData []byte, width uint32, row, col uint32, params PreviewParams) x3f.Vector3 {
 	var input x3f.Vector3
 
@@ -156,7 +100,7 @@ func normalizePixel(input x3f.Vector3, levels x3f.ImageLevels) x3f.Vector3 {
 }
 
 // 应用色彩转换和 gamma 校正
-func applyColorConversion(raw x3f.Vector3, convMatrix x3f.Matrix3x3) x3f.Vector3 {
+func applyColorConvForPreview(raw x3f.Vector3, convMatrix x3f.Matrix3x3) x3f.Vector3 {
 	rgb := convMatrix.Apply(raw)
 	rgb = x3f.ApplySRGBGamma(rgb)
 	return rgb
@@ -164,9 +108,49 @@ func applyColorConversion(raw x3f.Vector3, convMatrix x3f.Matrix3x3) x3f.Vector3
 
 // 写入 8-bit 像素值
 func writePixel(previewData []byte, row, col, width uint32, rgb x3f.Vector3) {
-	rgb8 := x3f.ConvertToUint8(rgb)
+	rgb8 := convertToUint8WithProportionalClip(rgb)
 	dstIdx := (row*width + col) * 3
 	previewData[dstIdx] = rgb8[0]
 	previewData[dstIdx+1] = rgb8[1]
 	previewData[dstIdx+2] = rgb8[2]
+}
+
+// convertToUint8WithProportionalClip 转换为 8-bit，保持色彩通道比例
+func convertToUint8WithProportionalClip(rgb x3f.Vector3) [3]uint8 {
+	val0 := rgb[0] * 255.0
+	val1 := rgb[1] * 255.0
+	val2 := rgb[2] * 255.0
+
+	// 如果有任何通道超过 255，按比例缩放所有通道以保持色彩比例
+	maxVal := val0
+	if val1 > maxVal {
+		maxVal = val1
+	}
+	if val2 > maxVal {
+		maxVal = val2
+	}
+
+	if maxVal > 255.0 {
+		scale := 255.0 / maxVal
+		val0 *= scale
+		val1 *= scale
+		val2 *= scale
+	}
+
+	// 处理负值（裁剪到 0）
+	if val0 < 0 {
+		val0 = 0
+	}
+	if val1 < 0 {
+		val1 = 0
+	}
+	if val2 < 0 {
+		val2 = 0
+	}
+
+	return [3]uint8{
+		uint8(val0 + 0.5),
+		uint8(val1 + 0.5),
+		uint8(val2 + 0.5),
+	}
 }

@@ -473,19 +473,3 @@ func ExpandQuattroWithDenoise(image, active *Area16, qtop *Area16, expanded, act
 	// 步骤 6: YUV -> BMT (Yis4T 模式)
 	config.yuvToBMT(expanded.Data, expanded.Columns, expanded.Rows, expanded.Channels)
 }
-
-// getAreaOffset 计算子区域在父区域中的偏移量
-func getAreaOffset(parent, child *Area16) int {
-	// 假设子区域和父区域共享相同的数据缓冲区
-	// 通过指针比较找到偏移量
-	for offset := 0; offset < len(parent.Data); offset++ {
-		if len(parent.Data[offset:]) >= len(child.Data) {
-			// 简单检查：如果第一个像素指向同一位置
-			if &parent.Data[offset] == &child.Data[0] {
-				return offset
-			}
-		}
-	}
-	// 如果找不到，假设从头开始
-	return 0
-}
