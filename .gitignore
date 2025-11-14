@@ -1,12 +1,6 @@
-# Binaries
-build/
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-raw/
 claude-docs/
+build/
+raw/
 bin/
 
 # Test files

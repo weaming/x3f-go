@@ -12,7 +12,7 @@ import (
 
 // JPEGOptions JPEG 输出选项
 type JPEGOptions struct {
-	Quality int // 1-100, 默认 95
+	Quality int // 1-100, 默认 98
 }
 
 // 写入 JPEG 文件
@@ -52,7 +52,7 @@ func WriteJPEG(img *x3f.ProcessedImage, filename string, opts JPEGOptions) error
 	// 设置质量
 	quality := opts.Quality
 	if quality <= 0 || quality > 100 {
-		quality = 95
+		quality = 98
 	}
 
 	// 编码 JPEG

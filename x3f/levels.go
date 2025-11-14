@@ -1,6 +1,7 @@
 package x3f
 
 import (
+	"fmt"
 	"math"
 	"runtime"
 	"sync"
@@ -476,13 +477,13 @@ func GetIntermediateBias(file *File, wb string, blackLevel BlackLevelInfo) (floa
 }
 
 // 应用 C 版本的预处理逻辑
-func PreprocessData(file *File, section *ImageSection, wb string) error {
+func PreprocessData(file *File, section *ImageSection, wb string) (string, error) {
 	debug("PreprocessData: starting preprocessing with wb='%s'", wb)
 
 	blackLevelInfo, err := CalculateBlackLevel(file, section)
 	if err != nil {
 		debug("PreprocessData: CalculateBlackLevel failed: %v", err)
-		return err
+		return "", err
 	}
 
 	maxRaw, ok := file.GetMaxRAW()
@@ -499,7 +500,7 @@ func PreprocessData(file *File, section *ImageSection, wb string) error {
 	maxIntermediate, ok := GetMaxIntermediate(file, wb, intermediateBias)
 	if !ok {
 		debug("PreprocessData: GetMaxIntermediate failed, skipping preprocessing")
-		return nil
+		return "跳过", nil
 	}
 
 	// 计算 scale
@@ -574,24 +575,38 @@ func PreprocessData(file *File, section *ImageSection, wb string) error {
 
 	// 坏点修复（在预处理之后）
 	badPixels := CollectBadPixels(file, decodedWidth, decodedHeight, 3)
-	InterpolateBadPixels(section.DecodedData, decodedWidth, decodedHeight, 3, badPixels)
+	// 使用 OpenCV inpaint 修复坏点（TELEA 算法，快速且质量好）
+	InpaintBadPixelsWithOpenCV(section.DecodedData, decodedWidth, decodedHeight, 3, badPixels, InpaintTELEA)
 
-	// V median filtering（在 YUV 色彩空间，只对 ActiveImageArea）
-	x0, y0, x1, y1, ok := file.GetCAMFRectScaled("ActiveImageArea", decodedWidth, decodedHeight, true)
-	if !ok {
-		// 如果没有 ActiveImageArea，使用整个图像
-		x0, y0 = 0, 0
-		x1, y1 = decodedWidth-1, decodedHeight-1
-		debug("Could not get active area, denoising entire image")
+	// V median filtering（仅对非 Quattro 格式）
+	// 对于 Quattro，T 通道在这个阶段还没有完全准备好，不能执行 YUV 转换
+	if !isQuattro {
+		x0, y0, x1, y1, ok := file.GetCAMFRectScaled("ActiveImageArea", decodedWidth, decodedHeight, true)
+		if !ok {
+			// 如果没有 ActiveImageArea，使用整个图像
+			x0, y0 = 0, 0
+			x1, y1 = decodedWidth-1, decodedHeight-1
+			debug("Could not get active area, using entire image for V median filter")
+		}
+
+		debug("V median filtering on active area [%d,%d,%d,%d]", x0, y0, x1, y1)
+		// 注意: 必须对整个图像做色彩空间转换,因为中值滤波需要访问边界外的像素
+		BMT_to_YUV_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
+		VMedianFilterArea(section.DecodedData, decodedWidth, decodedHeight, 3, x0, y0, x1, y1)
+		YUV_to_BMT_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
+	} else {
+		debug("Skip V median filtering for Quattro format (T channel not ready)")
 	}
 
-	debug("V median filtering on active area [%d,%d,%d,%d]", x0, y0, x1, y1)
-	// 注意: 必须对整个图像做色彩空间转换,因为中值滤波需要访问边界外的像素
-	BMT_to_YUV_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
-	VMedianFilterArea(section.DecodedData, decodedWidth, decodedHeight, 3, x0, y0, x1, y1)
-	YUV_to_BMT_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
+	// 构建返回信息
+	channelInfo := "3通道"
+	if isQuattro {
+		channelInfo = "2通道(BM)"
+	}
+	info := fmt.Sprintf("%s Scale R:%.2f G:%.2f B:%.2f | 坏点:%d",
+		channelInfo, scale[0], scale[1], scale[2], len(badPixels))
 
-	return nil
+	return info, nil
 }
 
 // PreprocessQuattroTop 对 Quattro top 层数据进行预处理

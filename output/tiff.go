@@ -102,11 +102,11 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 
 	// 计算需要多少个 IFD entry
 	numEntries := uint16(14) // 基础 entry 数
-	hasExif := opts.FNumber > 0 || opts.ExposureTime > 0 || opts.ISO > 0 || opts.LensModel != ""
-	if opts.Make != "" {
+	hasExif := opts.Exif.FNumber > 0 || opts.Exif.ExposureTime > 0 || opts.Exif.ISO > 0 || opts.Exif.LensModel != ""
+	if opts.Exif.Make != "" {
 		numEntries++
 	}
-	if opts.Model != "" {
+	if opts.Exif.Model != "" {
 		numEntries++
 	}
 	if hasExif {
@@ -136,17 +136,17 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 
 	// Make (271) - 必须在 StripOffsets 之前
 	makeOffset := dataOffset + uint32(len(imageData)) + 6 + 16 + 6 // BitsPerSample + XY Resolution + SampleFormat
-	if opts.Make != "" {
-		writeIFDEntry(file, ExifTagMake, TypeASCII, uint32(len(opts.Make)+1), makeOffset)
+	if opts.Exif.Make != "" {
+		writeIFDEntry(file, ExifTagMake, TypeASCII, uint32(len(opts.Exif.Make)+1), makeOffset)
 	}
 
 	// Model (272) - 必须在 StripOffsets 之前
 	modelOffset := makeOffset
-	if opts.Make != "" {
-		modelOffset += uint32((len(opts.Make) + 1 + 3) / 4 * 4)
+	if opts.Exif.Make != "" {
+		modelOffset += uint32((len(opts.Exif.Make) + 1 + 3) / 4 * 4)
 	}
-	if opts.Model != "" {
-		writeIFDEntry(file, ExifTagModel, TypeASCII, uint32(len(opts.Model)+1), modelOffset)
+	if opts.Exif.Model != "" {
+		writeIFDEntry(file, ExifTagModel, TypeASCII, uint32(len(opts.Exif.Model)+1), modelOffset)
 	}
 
 	// StripOffsets
@@ -181,8 +181,8 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 
 	// ExifIFD (34665) - 放在最后
 	extraDataOffset := modelOffset
-	if opts.Model != "" {
-		extraDataOffset += uint32((len(opts.Model) + 1 + 3) / 4 * 4)
+	if opts.Exif.Model != "" {
+		extraDataOffset += uint32((len(opts.Exif.Model) + 1 + 3) / 4 * 4)
 	}
 	exifIFDOffset := extraDataOffset
 	if hasExif {
@@ -214,20 +214,20 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 	binary.Write(file, binary.LittleEndian, sampleFormat)
 
 	// 写入额外的字符串数据
-	if opts.Make != "" {
-		file.Write([]byte(opts.Make))
+	if opts.Exif.Make != "" {
+		file.Write([]byte(opts.Exif.Make))
 		file.Write([]byte{0}) // null terminator
 		// 填充到 4 字节对齐
-		padding := (4 - ((len(opts.Make) + 1) % 4)) % 4
+		padding := (4 - ((len(opts.Exif.Make) + 1) % 4)) % 4
 		for i := 0; i < padding; i++ {
 			file.Write([]byte{0})
 		}
 	}
 
-	if opts.Model != "" {
-		file.Write([]byte(opts.Model))
+	if opts.Exif.Model != "" {
+		file.Write([]byte(opts.Exif.Model))
 		file.Write([]byte{0})
-		padding := (4 - ((len(opts.Model) + 1) % 4)) % 4
+		padding := (4 - ((len(opts.Exif.Model) + 1) % 4)) % 4
 		for i := 0; i < padding; i++ {
 			file.Write([]byte{0})
 		}
@@ -236,16 +236,16 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 	// 写入 EXIF IFD
 	if hasExif {
 		exifNumEntries := uint16(0)
-		if opts.FNumber > 0 {
+		if opts.Exif.FNumber > 0 {
 			exifNumEntries++
 		}
-		if opts.ExposureTime > 0 {
+		if opts.Exif.ExposureTime > 0 {
 			exifNumEntries++
 		}
-		if opts.ISO > 0 {
+		if opts.Exif.ISO > 0 {
 			exifNumEntries++
 		}
-		if opts.LensModel != "" {
+		if opts.Exif.LensModel != "" {
 			exifNumEntries++
 		}
 
@@ -257,54 +257,54 @@ func WriteTIFF(img *x3f.ProcessedImage, filename string, opts TIFFOptions) error
 			exifDataOffset := exifIFDOffset + 2 + uint32(exifNumEntries)*12 + 4
 
 			// ExposureTime (33434) - 必须按tag编号升序
-			if opts.ExposureTime > 0 {
+			if opts.Exif.ExposureTime > 0 {
 				writeIFDEntry(file, ExifTagExposureTime, TypeRational, 1, exifDataOffset)
 				exifDataOffset += 8
 			}
 
 			// FNumber (33437)
-			if opts.FNumber > 0 {
+			if opts.Exif.FNumber > 0 {
 				writeIFDEntry(file, ExifTagFNumber, TypeRational, 1, exifDataOffset)
 				exifDataOffset += 8
 			}
 
 			// ISO (34855)
-			if opts.ISO > 0 {
-				writeIFDEntry(file, ExifTagISOSpeed, TypeShort, 1, uint32(opts.ISO))
+			if opts.Exif.ISO > 0 {
+				writeIFDEntry(file, ExifTagISOSpeed, TypeShort, 1, uint32(opts.Exif.ISO))
 			}
 
 			// LensModel (42036)
 			lensModelOffset := exifDataOffset
-			if opts.LensModel != "" {
-				writeIFDEntry(file, ExifTagLensModel, TypeASCII, uint32(len(opts.LensModel)+1), lensModelOffset)
+			if opts.Exif.LensModel != "" {
+				writeIFDEntry(file, ExifTagLensModel, TypeASCII, uint32(len(opts.Exif.LensModel)+1), lensModelOffset)
 			}
 
 			// 下一个 IFD 偏移 (0 = 没有更多 EXIF IFD)
 			binary.Write(file, binary.LittleEndian, uint32(0))
 
 			// 写入 EXIF 数据值（顺序必须与上面的 entry 一致）
-			if opts.ExposureTime > 0 {
+			if opts.Exif.ExposureTime > 0 {
 				// ExposureTime 是 rational (1/shutter_speed)
 				// 如果 ExposureTime 是 1/1740，则存储为 1/1740
 				numerator := uint32(1)
-				denominator := uint32(1.0 / opts.ExposureTime)
-				if opts.ExposureTime >= 1.0 {
-					numerator = uint32(opts.ExposureTime)
+				denominator := uint32(1.0 / opts.Exif.ExposureTime)
+				if opts.Exif.ExposureTime >= 1.0 {
+					numerator = uint32(opts.Exif.ExposureTime)
 					denominator = 1
 				}
 				binary.Write(file, binary.LittleEndian, numerator)
 				binary.Write(file, binary.LittleEndian, denominator)
 			}
 
-			if opts.FNumber > 0 {
+			if opts.Exif.FNumber > 0 {
 				// FNumber 是 rational (numerator/denominator)
-				fNum := uint32(opts.FNumber * 10)
+				fNum := uint32(opts.Exif.FNumber * 10)
 				binary.Write(file, binary.LittleEndian, fNum)
 				binary.Write(file, binary.LittleEndian, uint32(10))
 			}
 
-			if opts.LensModel != "" {
-				file.Write([]byte(opts.LensModel))
+			if opts.Exif.LensModel != "" {
+				file.Write([]byte(opts.Exif.LensModel))
 				file.Write([]byte{0})
 			}
 		}
@@ -322,13 +322,8 @@ func writeIFDEntry(file *os.File, tag uint16, typ uint16, count uint32, value ui
 
 // TIFFOptions TIFF 输出选项
 type TIFFOptions struct {
-	Use16Bit     bool
-	Make         string  // 相机制造商
-	Model        string  // 相机型号
-	LensModel    string  // 镜头型号
-	FNumber      float64 // 光圈值
-	ExposureTime float64 // 曝光时间（秒）
-	ISO          uint16  // ISO 值
+	Use16Bit bool
+	Exif     x3f.ExifInfo // EXIF 拍摄参数
 }
 
 // 导出为 TIFF

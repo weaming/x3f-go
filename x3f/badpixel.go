@@ -1,5 +1,7 @@
 package x3f
 
+import "fmt"
+
 // BadPixel 坏点信息
 type BadPixel struct {
 	Col int
@@ -10,14 +12,24 @@ type BadPixel struct {
 func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []BadPixel {
 	var badPixels []BadPixel
 	badPixelMap := make(map[int]bool) // 用于去重
+	stats := make(map[string]int)     // 统计各来源
 
-	addBadPixel := func(col, row int) {
-		if col >= 0 && col < int(imageWidth) && row >= 0 && row < int(imageHeight) {
-			key := row*int(imageWidth) + col
-			if !badPixelMap[key] {
-				badPixelMap[key] = true
-				badPixels = append(badPixels, BadPixel{Col: col, Row: row})
-			}
+	outOfBounds := make(map[string]int)
+	duplicates := make(map[string]int)
+
+	addBadPixel := func(col, row int, source string) {
+		if col < 0 || col >= int(imageWidth) || row < 0 || row >= int(imageHeight) {
+			outOfBounds[source]++
+			return
+		}
+
+		key := row*int(imageWidth) + col
+		if !badPixelMap[key] {
+			badPixelMap[key] = true
+			badPixels = append(badPixels, BadPixel{Col: col, Row: row})
+			stats[source]++
+		} else {
+			duplicates[source]++
 		}
 	}
 
@@ -29,7 +41,7 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 				for _, val := range bp {
 					col := int((val&0x000fff00)>>8) - int(keep[0])
 					row := int((val&0xfff00000)>>20) - int(keep[1])
-					addBadPixel(col, row)
+					addBadPixel(col, row, "BadPixels")
 				}
 			}
 		}
@@ -41,7 +53,7 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 				for i := 0; i < rows; i++ {
 					col := int(matrix[i*3+1])
 					row := int(matrix[i*3+0])
-					addBadPixel(col, row)
+					addBadPixel(col, row, "BadPixelsF20")
 				}
 			}
 		}
@@ -53,7 +65,7 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 				for i := 0; i < rows; i++ {
 					col := int(matrix[i*3+1])
 					row := int(matrix[i*3+0])
-					addBadPixel(col, row)
+					addBadPixel(col, row, "Jpeg_BadClusters")
 				}
 			}
 		}
@@ -67,7 +79,7 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 
 			for row := startRow; row < int(imageHeight); row += pitchRow {
 				for col := startCol; col < int(imageWidth); col += pitchCol {
-					addBadPixel(col, row)
+					addBadPixel(col, row, "HighlightPixelsInfo")
 				}
 			}
 		}
@@ -81,20 +93,31 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 
 	if data, _, ok := file.GetCAMFMatrix(matrixName); ok {
 		if matrix, ok := data.([]uint32); ok {
+			totalElements := len(matrix)
+			rowCount := 0
+			pixelCount := 0
+			zeroCount := 0
+
 			currentRow := -1
 			for i := 0; i < len(matrix); {
 				if currentRow == -1 {
 					currentRow = int(matrix[i])
+					rowCount++
 					i++
 				} else if matrix[i] == 0 {
 					currentRow = -1
+					zeroCount++
 					i++
 				} else {
 					col := int(matrix[i])
-					addBadPixel(col, currentRow)
+					addBadPixel(col, currentRow, matrixName)
+					pixelCount++
 					i++
 				}
 			}
+
+			debug("%s 格式解析: 总元素=%d, 行标记=%d, 列数据=%d, 零分隔符=%d",
+				matrixName, totalElements, rowCount, pixelCount, zeroCount)
 		}
 	}
 
@@ -120,12 +143,11 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 		}
 
 		if grid != nil {
-			debug("Create AF grid for removing bad pixels")
 			for row := grid.ri; row <= grid.rf; row += grid.rp {
 				for col := grid.ci; col <= grid.cf; col += grid.cp {
 					for r := 0; r < grid.rs; r++ {
 						for c := 0; c < grid.cs; c++ {
-							addBadPixel(col+c, row+r)
+							addBadPixel(col+c, row+r, "AFGrid")
 						}
 					}
 				}
@@ -133,158 +155,47 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 		}
 	}
 
-	debug("Collected %d bad pixels", len(badPixels))
+	// 输出统计信息
+	// DEBUG=1 时显示详细信息，否则不显示
+	if len(badPixels) > 0 && debugEnabled {
+		fmt.Printf("坏点统计 (总数:%d, 图像尺寸:%dx%d=%.2f%%):\n",
+			len(badPixels), imageWidth, imageHeight,
+			float64(len(badPixels))*100.0/float64(imageWidth*imageHeight))
+		for source, count := range stats {
+			extra := ""
+			if dup, ok := duplicates[source]; ok && dup > 0 {
+				extra += fmt.Sprintf(" (重复:%d)", dup)
+			}
+			if oob, ok := outOfBounds[source]; ok && oob > 0 {
+				extra += fmt.Sprintf(" (越界:%d)", oob)
+			}
+			fmt.Printf("  %-20s: %d%s\n", source, count, extra)
+		}
+	}
+
 	return badPixels
 }
 
-// 插值修复坏点
-func InterpolateBadPixels(imageData []uint16, imageWidth, imageHeight, channels uint32, badPixels []BadPixel) {
+// InpaintBadPixelsWithOpenCV 使用 OpenCV inpaint 算法修复坏点
+func InpaintBadPixelsWithOpenCV(imageData []uint16, imageWidth, imageHeight, channels uint32, badPixels []BadPixel, method InpaintMethod) {
 	if len(badPixels) == 0 {
 		return
 	}
 
-	debug("There are bad pixels to fix")
-
 	width := int(imageWidth)
 	height := int(imageHeight)
 	chans := int(channels)
-	rowStride := width * chans
 
-	// 创建坏点标记位图
-	badPixelMap := make(map[int]bool)
+	// 创建坏点掩码（uint8，非零处表示坏点）
+	mask := make([]uint8, width*height)
 	for _, bp := range badPixels {
-		key := bp.Row*width + bp.Col
-		badPixelMap[key] = true
+		if bp.Col >= 0 && bp.Col < width && bp.Row >= 0 && bp.Row < height {
+			mask[bp.Row*width+bp.Col] = 255
+		}
 	}
 
-	isBadPixel := func(col, row int) bool {
-		if col < 0 || col >= width || row < 0 || row >= height {
-			return true // 越界视为坏点
-		}
-		key := row*width + col
-		return badPixelMap[key]
-	}
-
-	fixCorner := false
-	passNum := 0
-
-	for len(badPixelMap) > 0 {
-		var fixed []BadPixel
-		statsAllFour := 0
-		statsTwoLinear := 0
-		statsTwoCorner := 0
-		statsLeft := 0
-
-		// 遍历所有剩余的坏点
-		for key := range badPixelMap {
-			row := key / width
-			col := key % width
-
-			pixelIdx := row*rowStride + col*chans
-
-			// 检查四个邻居，保存像素起始索引
-			var neighborIndices [4]int
-			var neighborValid [4]bool
-			neighborCount := 0
-
-			if !isBadPixel(col-1, row) {
-				neighborIndices[0] = row*rowStride + (col-1)*chans
-				neighborValid[0] = true
-				neighborCount++
-			}
-			if !isBadPixel(col+1, row) {
-				neighborIndices[1] = row*rowStride + (col+1)*chans
-				neighborValid[1] = true
-				neighborCount++
-			}
-			if !isBadPixel(col, row-1) {
-				neighborIndices[2] = (row-1)*rowStride + col*chans
-				neighborValid[2] = true
-				neighborCount++
-			}
-			if !isBadPixel(col, row+1) {
-				neighborIndices[3] = (row+1)*rowStride + col*chans
-				neighborValid[3] = true
-				neighborCount++
-			}
-
-			// 决定插值策略
-			canInterpolate := false
-			var useNeighbors [4]bool
-			validCount := 0
-
-			if neighborValid[0] && neighborValid[1] && neighborValid[2] && neighborValid[3] {
-				// 四个邻居都OK
-				useNeighbors = neighborValid
-				validCount = 4
-				canInterpolate = true
-				statsAllFour++
-			} else if neighborValid[0] && neighborValid[1] {
-				// 左右OK
-				useNeighbors[0] = true
-				useNeighbors[1] = true
-				validCount = 2
-				canInterpolate = true
-				statsTwoLinear++
-			} else if neighborValid[2] && neighborValid[3] {
-				// 上下OK
-				useNeighbors[2] = true
-				useNeighbors[3] = true
-				validCount = 2
-				canInterpolate = true
-				statsTwoLinear++
-			} else if fixCorner && neighborCount == 2 {
-				// 对角OK（仅在最后阶段）
-				useNeighbors = neighborValid
-				validCount = 2
-				canInterpolate = true
-				statsTwoCorner++
-			} else {
-				// 无法插值
-				statsLeft++
-			}
-
-			if canInterpolate {
-				// 执行插值
-				for c := 0; c < chans; c++ {
-					sum := uint32(0)
-					for i := 0; i < 4; i++ {
-						if useNeighbors[i] {
-							sum += uint32(imageData[neighborIndices[i]+c])
-						}
-					}
-					imageData[pixelIdx+c] = uint16((sum + uint32(validCount)/2) / uint32(validCount))
-				}
-
-				// 标记为已修复
-				fixed = append(fixed, BadPixel{Col: col, Row: row})
-			}
-		}
-
-		debug("Bad pixels pass %d: %d fixed (%d all_four, %d linear, %d corner), %d left",
-			passNum,
-			statsAllFour+statsTwoLinear+statsTwoCorner,
-			statsAllFour,
-			statsTwoLinear,
-			statsTwoCorner,
-			statsLeft)
-
-		if len(fixed) == 0 {
-			// 没有修复任何像素
-			if !fixCorner {
-				fixCorner = true // 下一轮接受对角插值
-			} else {
-				debug("Failed to interpolate %d bad pixels", statsLeft)
-				break
-			}
-		}
-
-		// 从坏点列表中移除已修复的
-		for _, bp := range fixed {
-			key := bp.Row*width + bp.Col
-			delete(badPixelMap, key)
-		}
-
-		passNum++
-	}
+	// 调用 OpenCV inpaint
+	// radius=3: 修复半径，通常 3-5 像素足够
+	rowStride := width * chans
+	InpaintBadPixelsOpenCV(imageData, height, width, chans, rowStride, mask, width, 3, method)
 }

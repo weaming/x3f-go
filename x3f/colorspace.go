@@ -93,21 +93,6 @@ func GetXYZToRGBMatrix(cs ColorSpace) Matrix3x3 {
 	}
 }
 
-// 获取 RGB → XYZ 转换矩阵
-func GetRGBToXYZMatrix(cs ColorSpace) Matrix3x3 {
-	switch cs {
-	case ColorSpaceSRGB:
-		return SRGBToXYZ
-	case ColorSpaceAdobeRGB:
-		return AdobeRGBToXYZ
-	case ColorSpaceProPhotoRGB:
-		// ProPhoto RGB 使用 D50，需要先转换
-		return BradfordD50ToD65.Multiply(ProPhotoRGBToXYZ)
-	default:
-		return Identity3x3()
-	}
-}
-
 // 获取色彩空间的 gamma 值
 func GetGamma(cs ColorSpace) float64 {
 	switch cs {

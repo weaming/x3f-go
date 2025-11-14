@@ -126,11 +126,14 @@ func ExportPreprocessedPPM(imageSection *x3f.ImageSection, file *x3f.File, outpu
 	// 使用共享的预处理函数
 	// PPM 导出不需要详细日志，使用空 logger
 	logger := x3f.NewLogger()
-	preprocessed, err := x3f.PreprocessImage(file, imageSection, x3f.PreprocessOptions{
-		WhiteBalance: wb,
-		DoExpand:     true, // PPM 输出需要 expand
-		Verbose:      false,
-	}, logger)
+
+	profile := x3f.ProcessOptions{
+		WhiteBalanceType: wb,
+		Denoise:          false, // PPM 不使用降噪（调试格式）
+		NoCrop:           noCrop,
+	}
+
+	preprocessed, err := x3f.PreprocessImage(file, imageSection, profile, logger)
 	if err != nil {
 		return err
 	}

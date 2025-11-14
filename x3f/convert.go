@@ -19,14 +19,6 @@ func ApplyGamma(value, gamma float64) float64 {
 	return math.Pow(value, 1.0/gamma)
 }
 
-// 移除 gamma 校正（线性化）
-func RemoveGamma(value, gamma float64) float64 {
-	if value <= 0 {
-		return 0
-	}
-	return math.Pow(value, gamma)
-}
-
 // sRGB gamma 曲线（精确版本）
 func SRGBGamma(linear float64) float64 {
 	if linear <= 0.0031308 {
@@ -91,24 +83,6 @@ func (lut *GammaLUT) Lookup(val float64) uint16 {
 	}
 }
 
-// sRGB 逆 gamma 曲线
-func SRGBInverseGamma(srgb float64) float64 {
-	if srgb <= 0.04045 {
-		return srgb / 12.92
-	}
-	return math.Pow((srgb+0.055)/1.055, 2.4)
-}
-
-// 将 RAW 数据转换到 XYZ 色彩空间
-func ConvertRAWToXYZ(raw Vector3, rawToXYZ Matrix3x3) Vector3 {
-	return rawToXYZ.Apply(raw)
-}
-
-// 将 XYZ 转换到 RGB 色彩空间
-func ConvertXYZToRGB(xyz Vector3, xyzToRGB Matrix3x3) Vector3 {
-	return xyzToRGB.Apply(xyz)
-}
-
 // 对 RGB 向量应用 gamma 校正
 func ApplyGammaToRGB(rgb Vector3, gamma float64) Vector3 {
 	return Vector3{
@@ -125,33 +99,6 @@ func ApplySRGBGamma(rgb Vector3) Vector3 {
 		SRGBGamma(rgb[1]),
 		SRGBGamma(rgb[2]),
 	}
-}
-
-// 将值从 [0, maxVal] 归一化到 [0, 1]
-func NormalizeToRange(value, maxVal float64) float64 {
-	if maxVal <= 0 {
-		return 0
-	}
-	result := value / maxVal
-	if result < 0 {
-		return 0
-	}
-	if result > 1 {
-		return 1
-	}
-	return result
-}
-
-// 将值从 [0, 1] 反归一化到 [0, maxVal]
-func DenormalizeFromRange(value, maxVal float64) float64 {
-	result := value * maxVal
-	if result < 0 {
-		return 0
-	}
-	if result > maxVal {
-		return maxVal
-	}
-	return result
 }
 
 // Clamp 将值限制在 [min, max] 范围内
@@ -215,13 +162,20 @@ func AgXToneMapping(color Vector3) Vector3 {
 	// Step 3: 3D LUT 查找（三线性插值）
 	lutResult := agxLUT3DLookup(logEncoded)
 
-	// Step 4: 从 Rec.1886 (gamma 2.4) 转换到 Linear
-	// LUT 输出是 Rec.1886 编码，需要转换回线性空间
-	// Gamma 校正将由 pipeline 统一处理
+	// Step 4: LUT 输出已经是显示编码（Rec.1886, gamma 2.4）
+	// Rec.1886 (gamma 2.4) 与 sRGB (gamma 2.2) 非常接近
+	// 直接使用 LUT 输出，避免 gamma 转换导致的对比度损失
+	//
+	// 注意：pipeline 会跳过 gamma 校正（因为已经编码）
+	// 因此需要配合 LinearOutput=true 或者修改 pipeline 逻辑
+	//
+	// 【临时修复】：仍然转回线性空间，但使用 gamma 2.2 以匹配后续处理
+	// 这样最终 pow(x, 2.2) * pow(x, 1/2.2) = x，保持一致
 	result := Vector3{}
 	for i := 0; i < 3; i++ {
-		// Rec.1886 -> Linear (移除 gamma 2.4)
-		result[i] = math.Pow(lutResult[i], 2.4)
+		// Rec.1886 -> Linear (使用 gamma 2.2 而不是 2.4)
+		// 这样与后续的 gamma 2.2 校正相匹配
+		result[i] = math.Pow(lutResult[i], 2.2)
 		result[i] = Clamp(result[i], 0, 1)
 	}
 
@@ -313,23 +267,6 @@ func SimpleExposure(color Vector3, exposure float64) Vector3 {
 		color[1] * scale,
 		color[2] * scale,
 	}
-}
-
-// 自动曝光调整
-func AutoExposure(color Vector3, targetBrightness float64) (Vector3, float64) {
-	// 计算亮度（使用 Rec. 709 系数）
-	brightness := 0.2126*color[0] + 0.7152*color[1] + 0.0722*color[2]
-
-	if brightness <= 0 {
-		return color, 1.0
-	}
-
-	scale := targetBrightness / brightness
-	return Vector3{
-		color[0] * scale,
-		color[1] * scale,
-		color[2] * scale,
-	}, scale
 }
 
 // 将浮点 RGB 转换为 16-bit 整数

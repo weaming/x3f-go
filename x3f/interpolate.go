@@ -5,74 +5,6 @@ import (
 	"sync"
 )
 
-// 双线性插值上采样
-func BilinearUpscale(src []uint16, srcWidth, srcHeight, srcChannels, dstWidth, dstHeight int) []uint16 {
-	dst := make([]uint16, dstWidth*dstHeight*srcChannels)
-
-	scaleX := float64(srcWidth) / float64(dstWidth)
-	scaleY := float64(srcHeight) / float64(dstHeight)
-
-	for dstY := 0; dstY < dstHeight; dstY++ {
-		for dstX := 0; dstX < dstWidth; dstX++ {
-			// 计算源坐标
-			srcXf := (float64(dstX) + 0.5) * scaleX
-			srcYf := (float64(dstY) + 0.5) * scaleY
-
-			// 获取周围 4 个像素的坐标
-			x0 := int(srcXf)
-			y0 := int(srcYf)
-			x1 := x0 + 1
-			y1 := y0 + 1
-
-			// 边界检查
-			if x0 < 0 {
-				x0 = 0
-			}
-			if y0 < 0 {
-				y0 = 0
-			}
-			if x1 >= srcWidth {
-				x1 = srcWidth - 1
-			}
-			if y1 >= srcHeight {
-				y1 = srcHeight - 1
-			}
-
-			// 计算权重
-			wx1 := srcXf - float64(x0)
-			wy1 := srcYf - float64(y0)
-			wx0 := 1.0 - wx1
-			wy0 := 1.0 - wy1
-
-			// 对每个通道进行插值
-			for c := 0; c < srcChannels; c++ {
-				// 获取 4 个角的像素值
-				p00 := src[(y0*srcWidth+x0)*srcChannels+c]
-				p10 := src[(y0*srcWidth+x1)*srcChannels+c]
-				p01 := src[(y1*srcWidth+x0)*srcChannels+c]
-				p11 := src[(y1*srcWidth+x1)*srcChannels+c]
-
-				// 双线性插值
-				v0 := float64(p00)*wx0 + float64(p10)*wx1
-				v1 := float64(p01)*wx0 + float64(p11)*wx1
-				val := v0*wy0 + v1*wy1
-
-				// 限制范围
-				if val < 0 {
-					val = 0
-				}
-				if val > 65535 {
-					val = 65535
-				}
-
-				dst[(dstY*dstWidth+dstX)*srcChannels+c] = uint16(val)
-			}
-		}
-	}
-
-	return dst
-}
-
 // 双三次插值核函数（Catmull-Rom）
 func cubicWeight(x float64) float64 {
 	x = abs(x)
@@ -91,7 +23,10 @@ func abs(x float64) float64 {
 	return x
 }
 
-// 双三次插值上采样（使用 Catmull-Rom 样条）
+// BicubicUpscale 双三次插值上采样（使用 Catmull-Rom 样条）
+//
+// 注意：此函数仅在禁用降噪时使用
+// 启用降噪时使用 BicubicUpscaleOpenCV（基于 OpenCV，与 C 版本一致）
 func BicubicUpscale(src []uint16, srcWidth, srcHeight, srcChannels, dstWidth, dstHeight int) []uint16 {
 	dst := make([]uint16, dstWidth*dstHeight*srcChannels)
 
