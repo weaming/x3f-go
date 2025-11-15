@@ -42,14 +42,9 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 
 	// 2.1 获取白平衡
 	wb := profile.WhiteBalanceType
-	wbSource := "用户指定"
-	if wb == "" {
-		wb = file.GetWhiteBalance()
-		wbSource = "文件默认"
-	}
 
 	// 2.2 计算黑电平
-	logger.Step("2️⃣  计算黑电平", fmt.Sprintf("WB=%s (%s)", wb, wbSource))
+	logger.Step("2️⃣  计算黑电平", fmt.Sprintf("WB=%s", wb))
 	blackLevel, err := CalculateBlackLevel(file, imageSection)
 	if err != nil {
 		return nil, fmt.Errorf("计算黑电平失败: %w", err)

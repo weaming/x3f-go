@@ -463,6 +463,11 @@ func applyIntermediateToSRGB(imageData []byte, dims imageDimensions, x3fFile *x3
 	intermediateBias := preproc.IntermediateBias
 	maxIntermediate := preproc.MaxIntermediate
 
+	debug("applyIntermediateToSRGB: wb=%s, bias=%.2f, max=%v", wb, intermediateBias, maxIntermediate)
+	debug("rawToXYZ matrix: %v", rawToXYZ)
+	debug("xyzToSRGB matrix: %v", xyzToSRGB)
+	debug("combined matrix: %v", combinedMat)
+
 	// 5. 对每个像素应用转换
 	maxOut := 65535.0
 	pixelCount := dims.targetWidth * dims.targetHeight

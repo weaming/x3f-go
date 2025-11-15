@@ -8,7 +8,7 @@ import (
 	"github.com/weaming/x3f-go/x3f"
 )
 
-func dumpMetadata(x3fFile *x3f.File, config *output.Config) error {
+func dumpMetadata(x3fFile *x3f.File, config output.Config) error {
 	outputPath := config.Input + ".meta"
 
 	f, err := os.Create(outputPath)

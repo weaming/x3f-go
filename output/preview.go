@@ -17,7 +17,7 @@ type PreviewParams struct {
 }
 
 // 从全分辨率 16-bit linear sRGB 图像生成 8-bit sRGB 预览图
-// imageData: 已经转换为 XYZ 色彩空间的图像数据 (uint16, 范围 0-65535)
+// imageData: 已经转换为 linear sRGB 的图像数据 (uint16, 范围 0-65535)
 func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint32) ([]byte, uint32, uint32) {
 	params := preparePreviewParams(width, height, maxWidth)
 	previewData := make([]byte, params.previewWidth*params.previewHeight*3)
@@ -28,7 +28,6 @@ func generatePreviewImage(imageData []byte, width, height uint32, maxWidth uint3
 // 准备预览图生成参数
 func preparePreviewParams(width, height, maxWidth uint32) PreviewParams {
 	reduction := calculateReduction(width, maxWidth)
-	convMatrix := x3f.GetColorMatrix1()
 
 	return PreviewParams{
 		reduction:     reduction,
@@ -36,7 +35,7 @@ func preparePreviewParams(width, height, maxWidth uint32) PreviewParams {
 		previewWidth:  width / reduction,
 		previewHeight: height / reduction,
 		levels:        stdLevels,
-		convMatrix:    convMatrix,
+		convMatrix:    x3f.Identity3x3(), // 输入已经是 linear sRGB，使用单位矩阵
 	}
 }
 

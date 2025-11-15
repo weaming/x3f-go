@@ -30,8 +30,8 @@ func main() {
 	}
 }
 
-func parseFlags() *output.Config {
-	config := &output.Config{}
+func parseFlags() output.Config {
+	config := output.Config{}
 
 	flag.StringVar(&config.Output, "o", "", "输出文件路径 (必需)")
 	flag.StringVar(&config.ColorSpace, "cs", "sRGB",
@@ -75,7 +75,7 @@ func parseFlags() *output.Config {
 	return config
 }
 
-func run(config *output.Config) error {
+func run(config output.Config) error {
 	logger := x3f.NewLogger()
 
 	// 步骤 1: 打开文件
@@ -97,6 +97,9 @@ func run(config *output.Config) error {
 	}
 	logger.Done("完成")
 
+	if config.WhiteBalance == "Auto" {
+		config.WhiteBalance = x3fFile.GetWhiteBalance()
+	}
 	// 如果指定了 -meta,输出元数据并退出
 	if config.DumpMeta {
 		return dumpMetadata(x3fFile, config)
@@ -135,7 +138,7 @@ func run(config *output.Config) error {
 	return convertErr
 }
 
-func convertToDNG(x3fFile *x3f.File, config *output.Config, logger *x3f.Logger) error {
+func convertToDNG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
 	// 提取相机信息
 	logger.Step("准备 DNG 元数据")
 	cameraInfo := x3f.ExtractCameraInfo(x3fFile, config.WhiteBalance)
@@ -146,7 +149,7 @@ func convertToDNG(x3fFile *x3f.File, config *output.Config, logger *x3f.Logger) 
 		fmt.Printf("写入 DNG 文件: %s\n", config.Output)
 	}
 
-	commonData, err := output.ProcessAll(x3fFile, *config, logger)
+	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
 	}
@@ -160,33 +163,33 @@ func convertToDNG(x3fFile *x3f.File, config *output.Config, logger *x3f.Logger) 
 	return nil
 }
 
-func convertToTIFF(x3fFile *x3f.File, config *output.Config, logger *x3f.Logger) error {
+func convertToTIFF(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
 	if config.Verbose {
 		fmt.Println("转换为 TIFF...")
 	}
 
-	commonData, err := output.ProcessAll(x3fFile, *config, logger)
+	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
 	}
 
-	return output.ExportTIFF(commonData, x3fFile, *config, config.Output, logger)
+	return output.ExportTIFF(commonData, x3fFile, config, config.Output, logger)
 }
 
-func convertToJPEG(x3fFile *x3f.File, config *output.Config, logger *x3f.Logger) error {
+func convertToJPEG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
 	if config.Verbose {
 		fmt.Println("转换为 JPEG...")
 	}
 
-	commonData, err := output.ProcessAll(x3fFile, *config, logger)
+	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
 	}
 
-	return output.ExportJPEG(commonData, x3fFile, *config, config.Output, logger)
+	return output.ExportJPEG(commonData, x3fFile, config, config.Output, logger)
 }
 
-func convertToPPM(x3fFile *x3f.File, config *output.Config) error {
+func convertToPPM(x3fFile *x3f.File, config output.Config) error {
 	if config.Qtop {
 		if config.Verbose {
 			fmt.Println("转换为 PPM（Quattro top 层数据）...")
