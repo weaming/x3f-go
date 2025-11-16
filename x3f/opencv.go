@@ -31,12 +31,40 @@ void denoise_nlm_opencv(uint16_t* data, int rows, int cols, int channels, int ro
 void denoise_quattro_highres_opencv(uint16_t* data, int rows, int cols, int channels, int rowStride, float h);
 void bicubic_upscale_opencv(uint16_t* src, int srcRows, int srcCols, int channels, int srcStride,
                             uint16_t* dst, int dstRows, int dstCols, int dstStride);
+void ColorTransform(uint16_t* data, int rows, int cols, int channels, int rowStride, int transformType);
 
 */
 import "C"
 import (
 	"unsafe"
 )
+
+// ColorTransformType 定义色彩转换的类型
+type ColorTransformType int
+
+const (
+	BMT_to_YUV_STD ColorTransformType = iota
+	YUV_to_BMT_STD
+	BMT_to_YUV_YisT
+	YUV_to_BMT_YisT
+	BMT_to_YUV_Yis4T
+	YUV_to_BMT_Yis4T
+)
+
+// ColorTransformOpenCV 调用 C++ 实现的色彩空间转换
+func ColorTransformOpenCV(data []uint16, rows, cols, channels, rowStride int, transformType ColorTransformType) {
+	if len(data) == 0 {
+		return
+	}
+	C.ColorTransform(
+		(*C.uint16_t)(unsafe.Pointer(&data[0])),
+		C.int(rows),
+		C.int(cols),
+		C.int(channels),
+		C.int(rowStride),
+		C.int(transformType),
+	)
+}
 
 // BicubicUpscaleOpenCV 使用 OpenCV 进行 Bicubic 上采样（与 C 版本完全一致）
 func BicubicUpscaleOpenCV(src []uint16, srcRows, srcCols, channels, srcStride int,

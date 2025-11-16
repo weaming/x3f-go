@@ -190,7 +190,7 @@ func quattroStep1_ConvertBMTtoYUV(bmtData []uint16, width, height int) []uint16 
 	yuvData := make([]uint16, len(bmtData))
 	copy(yuvData, bmtData)
 
-	BMT_to_YUV_Yis4T(yuvData, uint32(width), uint32(height), 3)
+	ColorTransformOpenCV(yuvData, int(width), int(height), 3, width*3, BMT_to_YUV_Yis4T)
 
 	return yuvData
 }
@@ -271,5 +271,5 @@ func quattroStep3_ReplaceYChannelWithTopLayer(yuvData []uint16, dstWidth, dstHei
 func quattroStep4_ConvertYUVtoBMT(yuvData []uint16, width, height int) {
 	debug("Quattro 步骤4: YUV → BMT (Yis4T)")
 
-	YUV_to_BMT_Yis4T(yuvData, uint32(width), uint32(height), 3)
+	ColorTransformOpenCV(yuvData, int(width), int(height), 3, width*3, YUV_to_BMT_Yis4T)
 }
