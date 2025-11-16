@@ -46,19 +46,11 @@ jobs:
           lipo -info build/release/x3f-go-darwin-universal
           ./build/release/x3f-go-darwin-universal --help
 
-      - name: Package release
-        run: |
-          cd build/release
-          tar -czf x3f-go-darwin-universal.tar.gz x3f-go-darwin-universal
-          shasum -a 256 x3f-go-darwin-universal.tar.gz > x3f-go-darwin-universal.tar.gz.sha256
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: x3f-go-darwin-universal
-          path: |
-            build/release/x3f-go-darwin-universal.tar.gz
-            build/release/x3f-go-darwin-universal.tar.gz.sha256
+          path: build/release/x3f-go-darwin-universal
 
   # Linux amd64
   build-linux:
@@ -101,19 +93,11 @@ jobs:
           file build/release/x3f-go-linux-amd64
           ./build/release/x3f-go-linux-amd64 --help
 
-      - name: Package release
-        run: |
-          cd build/release
-          tar -czf x3f-go-linux-amd64.tar.gz x3f-go-linux-amd64
-          sha256sum x3f-go-linux-amd64.tar.gz > x3f-go-linux-amd64.tar.gz.sha256
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: x3f-go-linux-amd64
-          path: |
-            build/release/x3f-go-linux-amd64.tar.gz
-            build/release/x3f-go-linux-amd64.tar.gz.sha256
+          path: build/release/x3f-go-linux-amd64
 
   # Create GitHub Release
   release:
@@ -136,10 +120,8 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            artifacts/x3f-go-darwin-universal/*.tar.gz
-            artifacts/x3f-go-darwin-universal/*.sha256
-            artifacts/x3f-go-linux-amd64/*.tar.gz
-            artifacts/x3f-go-linux-amd64/*.sha256
+            artifacts/x3f-go-darwin-universal/x3f-go-darwin-universal
+            artifacts/x3f-go-linux-amd64/x3f-go-linux-amd64
           body: |
             ## x3f-go 自动发布
 
@@ -147,17 +129,8 @@ jobs:
 
             | 平台 | 架构 | 下载 |
             |------|------|------|
-            | macOS | Universal (arm64 + amd64) | `x3f-go-darwin-universal.tar.gz` |
-            | Linux | amd64 | `x3f-go-linux-amd64.tar.gz` |
-
-            ### 安装
-
-            **macOS/Linux:**
-            ```bash
-            tar -xzf x3f-go-*.tar.gz
-            chmod +x x3f-go-*
-            ./x3f-go-* --help
-            ```
+            | macOS | Universal (arm64 + amd64) | `x3f-go-darwin-universal` |
+            | Linux | amd64 | `x3f-go-linux-amd64` |
 
             ### 特性
 
@@ -166,11 +139,3 @@ jobs:
             - ✅ 支持 Quattro 传感器
             - ✅ 多种输出格式（DNG, TIFF, JPEG）
             - ✅ 静态编译，无需依赖
-
-            ### 校验
-
-            使用 SHA256 校验文件完整性：
-            ```bash
-            # macOS/Linux
-            shasum -c x3f-go-*.sha256
-            ```
