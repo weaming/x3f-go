@@ -24,6 +24,7 @@ package x3f
 #cgo windows LDFLAGS: -lgdi32 -lole32 -loleaut32
 
 #include <stdint.h>
+#include "postprocess_opencv.h"
 
 // 声明 C++ 实现的函数（在 denoise_opencv.cpp 中）
 void denoise_nlm_opencv(uint16_t* data, int rows, int cols, int channels, int rowStride, float h);
@@ -114,5 +115,34 @@ func InpaintBadPixelsOpenCV(data []uint16, rows, cols, channels, rowStride int,
 		C.int(maskStride),
 		C.int(radius),
 		C.int(method),
+	)
+}
+
+// ApplyPostProcessingOpenCV uses OpenCV to apply exposure, tone mapping, and gamma correction.
+func ApplyPostProcessingOpenCV(input []uint16, output []float64, width, height int, exposure float64, toneMapping ToneMappingMethod, gamma float64) {
+	if len(input) == 0 || len(output) == 0 {
+		return
+	}
+
+	var cToneMappingMethod C.int
+	switch toneMapping {
+	case ToneMappingNone:
+		cToneMappingMethod = 0
+	case ToneMappingACES:
+		cToneMappingMethod = 1
+	case ToneMappingAgX:
+		cToneMappingMethod = 2
+	default:
+		cToneMappingMethod = 2 // Default to AgX
+	}
+
+	C.applyPostProcessingOpenCV(
+		(*C.uint16_t)(unsafe.Pointer(&input[0])),
+		(*C.double)(unsafe.Pointer(&output[0])),
+		C.int(width),
+		C.int(height),
+		C.double(exposure),
+		cToneMappingMethod,
+		C.double(gamma),
 	)
 }

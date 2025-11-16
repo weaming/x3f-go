@@ -80,42 +80,29 @@ func applyPostProcessing(imageData []byte, dims imageDimensions, config Config) 
 		Data:     make([]float64, totalPixels*3),
 	}
 
-	maxOut := 65535.0
-
-	for i := 0; i < totalPixels; i++ {
-		offset := i * 6 // 16-bit RGB, 3 channels
-
-		// 读取 linear sRGB 值 (uint16)
-		r := float64(binary.LittleEndian.Uint16(imageData[offset:]))
-		g := float64(binary.LittleEndian.Uint16(imageData[offset+2:]))
-		b := float64(binary.LittleEndian.Uint16(imageData[offset+4:]))
-
-		// 归一化到 [0, 1]
-		rgb := x3f.Vector3{r / maxOut, g / maxOut, b / maxOut}
-
-		// 可选的曝光补偿
-		if config.ExposureValue != 0 {
-			rgb = x3f.SimpleExposure(rgb, config.ExposureValue)
-		}
-
-		// 应用色调映射
-		toneMappingMethod := getToneMappingMethod(config.ToneMapping)
-		if toneMappingMethod != x3f.ToneMappingNone && toneMappingMethod != "" {
-			rgb = x3f.ApplyToneMapping(rgb, toneMappingMethod)
-		}
-
-		// 应用 gamma 校正
-		colorSpace := getColorSpace(config.ColorSpace)
-		gamma := x3f.GetGamma(colorSpace)
-		if gamma > 0 {
-			rgb = x3f.ApplyGammaToRGB(rgb, gamma)
-		}
-
-		// 存储结果
-		processed.Data[i*3] = rgb[0]
-		processed.Data[i*3+1] = rgb[1]
-		processed.Data[i*3+2] = rgb[2]
+	// Convert byte slice to uint16 slice for CGo
+	if len(imageData)%2 != 0 {
+		panic("imageData length must be a multiple of 2 to be converted to uint16")
 	}
+	inputData := make([]uint16, len(imageData)/2)
+	for i := 0; i < len(inputData); i++ {
+		inputData[i] = binary.LittleEndian.Uint16(imageData[i*2:])
+	}
+
+	toneMappingMethod := getToneMappingMethod(config.ToneMapping)
+	colorSpace := getColorSpace(config.ColorSpace)
+	gamma := x3f.GetGamma(colorSpace)
+
+	// Use OpenCV accelerated function
+	x3f.ApplyPostProcessingOpenCV(
+		inputData,
+		processed.Data,
+		int(width),
+		int(height),
+		config.ExposureValue,
+		toneMappingMethod,
+		gamma,
+	)
 
 	return processed
 }
