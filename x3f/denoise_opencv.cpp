@@ -109,58 +109,5 @@ void bicubic_upscale_opencv(uint16_t* src, int srcRows, int srcCols, int channel
     cv::resize(srcMat, dstMat, dstMat.size(), 0.0, 0.0, cv::INTER_CUBIC);
 }
 
-// 坏点修复（使用 cv::inpaint）
-// mask: 坏点掩码，非零处表示坏点位置
-// inpaintRadius: 修复半径（通常为 3）
-// method: 0=INPAINT_NS (质量好但慢), 1=INPAINT_TELEA (快但质量略差)
-//
-// 注意：OpenCV 的 inpaint 不支持 16-bit 多通道，所以分通道处理
-void inpaint_bad_pixels_opencv(uint16_t* data, int rows, int cols, int channels, int rowStride,
-                                 uint8_t* mask, int maskStride, int inpaintRadius, int method) {
-    // 创建图像 Mat（支持 stride）
-    size_t dataStep = rowStride * sizeof(uint16_t);
-    cv::Mat img(rows, cols, CV_16UC(channels), data, dataStep);
-
-    // 创建掩码 Mat（支持 stride）
-    cv::Mat maskMat(rows, cols, CV_8U, mask, maskStride);
-
-    int inpaintMethod = (method == 0) ? cv::INPAINT_NS : cv::INPAINT_TELEA;
-
-    if (channels == 1) {
-        // 单通道图像：直接 inpaint
-        cv::Mat out;
-        cv::inpaint(img, maskMat, out, inpaintRadius, inpaintMethod);
-
-        for (int y = 0; y < rows; y++) {
-            memcpy(data + y * rowStride,
-                   out.ptr<uint16_t>(y),
-                   cols * sizeof(uint16_t));
-        }
-    } else {
-        // 多通道图像：分通道处理（因为 inpaint 不支持 16-bit 多通道）
-        std::vector<cv::Mat> channelMats(channels);
-
-        // 分离通道
-        cv::split(img, channelMats);
-
-        // 对每个通道单独执行 inpaint
-        for (int c = 0; c < channels; c++) {
-            cv::Mat out;
-            cv::inpaint(channelMats[c], maskMat, out, inpaintRadius, inpaintMethod);
-            channelMats[c] = out;
-        }
-
-        // 合并通道
-        cv::Mat result;
-        cv::merge(channelMats, result);
-
-        // 复制回原始数据（支持 stride）
-        for (int y = 0; y < rows; y++) {
-            memcpy(data + y * rowStride,
-                   result.ptr<uint16_t>(y),
-                   cols * channels * sizeof(uint16_t));
-        }
-    }
-}
 
 } // extern "C"

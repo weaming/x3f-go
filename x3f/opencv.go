@@ -31,8 +31,7 @@ void denoise_nlm_opencv(uint16_t* data, int rows, int cols, int channels, int ro
 void denoise_quattro_highres_opencv(uint16_t* data, int rows, int cols, int channels, int rowStride, float h);
 void bicubic_upscale_opencv(uint16_t* src, int srcRows, int srcCols, int channels, int srcStride,
                             uint16_t* dst, int dstRows, int dstCols, int dstStride);
-void inpaint_bad_pixels_opencv(uint16_t* data, int rows, int cols, int channels, int rowStride,
-                               uint8_t* mask, int maskStride, int inpaintRadius, int method);
+
 */
 import "C"
 import (
@@ -82,39 +81,6 @@ func DenoiseQuattroHighRes(data []uint16, rows, cols, channels, rowStride int, h
 		C.int(channels),
 		C.int(rowStride),
 		C.float(h),
-	)
-}
-
-// InpaintMethod 定义 inpaint 算法类型
-type InpaintMethod int
-
-const (
-	// InpaintNS Navier-Stokes 算法（质量好但慢）
-	InpaintNS InpaintMethod = 0
-	// InpaintTELEA 快速行进法（快但质量略差）
-	InpaintTELEA InpaintMethod = 1
-)
-
-// InpaintBadPixelsOpenCV 使用 OpenCV 的 inpaint 算法修复坏点
-// data: 图像数据 (uint16)
-// mask: 坏点掩码 (uint8，非零处表示坏点)
-// radius: 修复半径（通常为 3）
-// method: 修复算法 (InpaintNS 或 InpaintTELEA)
-func InpaintBadPixelsOpenCV(data []uint16, rows, cols, channels, rowStride int,
-	mask []uint8, maskStride, radius int, method InpaintMethod) {
-	if len(data) == 0 || len(mask) == 0 {
-		return
-	}
-	C.inpaint_bad_pixels_opencv(
-		(*C.uint16_t)(unsafe.Pointer(&data[0])),
-		C.int(rows),
-		C.int(cols),
-		C.int(channels),
-		C.int(rowStride),
-		(*C.uint8_t)(unsafe.Pointer(&mask[0])),
-		C.int(maskStride),
-		C.int(radius),
-		C.int(method),
 	)
 }
 

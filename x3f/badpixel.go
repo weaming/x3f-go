@@ -112,7 +112,7 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 					col := int(matrix[i])
 					addBadPixel(col, currentRow, matrixName)
 					pixelCount++
-					i++
+					i += 2
 				}
 			}
 
@@ -176,8 +176,8 @@ func CollectBadPixels(file *File, imageWidth, imageHeight uint32, colors int) []
 	return badPixels
 }
 
-// InpaintBadPixelsWithOpenCV 使用 OpenCV inpaint 算法修复坏点
-func InpaintBadPixelsWithOpenCV(imageData []uint16, imageWidth, imageHeight, channels uint32, badPixels []BadPixel, method InpaintMethod) {
+// InpaintBadPixels 使用纯 Go 实现的等价 C 版本插值算法来修复坏点
+func InpaintBadPixels(imageData []uint16, imageWidth, imageHeight, channels uint32, badPixels []BadPixel) {
 	if len(badPixels) == 0 {
 		return
 	}
@@ -185,17 +185,115 @@ func InpaintBadPixelsWithOpenCV(imageData []uint16, imageWidth, imageHeight, cha
 	width := int(imageWidth)
 	height := int(imageHeight)
 	chans := int(channels)
+	rowStride := width * chans
 
-	// 创建坏点掩码（uint8，非零处表示坏点）
-	mask := make([]uint8, width*height)
+	// 创建一个布尔掩码用于快速查找坏点，true 表示是坏点
+	isBadPixel := make([]bool, width*height)
 	for _, bp := range badPixels {
 		if bp.Col >= 0 && bp.Col < width && bp.Row >= 0 && bp.Row < height {
-			mask[bp.Row*width+bp.Col] = 255
+			isBadPixel[bp.Row*width+bp.Col] = true
 		}
 	}
 
-	// 调用 OpenCV inpaint
-	// radius=3: 修复半径，通常 3-5 像素足够
-	rowStride := width * chans
-	InpaintBadPixelsOpenCV(imageData, height, width, chans, rowStride, mask, width, 3, method)
+	// 待处理的坏点列表
+	remainingBadPixels := badPixels
+	fixCorner := false // 是否允许使用对角像素进行修复
+	pass := 0
+
+	for len(remainingBadPixels) > 0 {
+		var stillBadPixels []BadPixel
+		fixedInPass := 0
+
+		// 遍历当前轮次中所有待处理的坏点
+		for _, bp := range remainingBadPixels {
+			c, r := bp.Col, bp.Row
+
+			// 检查四个邻居的状态
+			neighbors := [4][]uint16{}
+			validNeighbors := 0
+			// Left
+			if c > 0 && !isBadPixel[r*width+(c-1)] {
+				idx := r*rowStride + (c-1)*chans
+				neighbors[0] = imageData[idx : idx+chans]
+				validNeighbors++
+			}
+			// Right
+			if c < width-1 && !isBadPixel[r*width+(c+1)] {
+				idx := r*rowStride + (c+1)*chans
+				neighbors[1] = imageData[idx : idx+chans]
+				validNeighbors++
+			}
+			// Top
+			if r > 0 && !isBadPixel[(r-1)*width+c] {
+				idx := (r-1)*rowStride + c*chans
+				neighbors[2] = imageData[idx : idx+chans]
+				validNeighbors++
+			}
+			// Bottom
+			if r < height-1 && !isBadPixel[(r+1)*width+c] {
+				idx := (r+1)*rowStride + c*chans
+				neighbors[3] = imageData[idx : idx+chans]
+				validNeighbors++
+			}
+
+			canFix := false
+
+			// 判断是否可以修复
+			if neighbors[0] != nil && neighbors[1] != nil && neighbors[2] != nil && neighbors[3] != nil {
+				// 四个邻居都可用
+				canFix = true
+			} else if neighbors[0] != nil && neighbors[1] != nil {
+				// 左右邻居可用
+				canFix = true
+				neighbors[2], neighbors[3] = nil, nil // 只使用左右
+			} else if neighbors[2] != nil && neighbors[3] != nil {
+				// 上下邻居可用
+				canFix = true
+				neighbors[0], neighbors[1] = nil, nil // 只使用上下
+			} else if fixCorner && validNeighbors >= 2 {
+				// 如果是第二轮，允许使用任意两个邻居（包括对角）
+				canFix = true
+			}
+
+			if canFix {
+				// 执行插值
+				outpIdx := r*rowStride + c*chans
+				for color := 0; color < chans; color++ {
+					sum := uint32(0)
+					count := 0
+					for i := 0; i < 4; i++ {
+						if neighbors[i] != nil {
+							sum += uint32(neighbors[i][color])
+							count++
+						}
+					}
+					// 使用 C 版本的带舍入的整数除法
+					imageData[outpIdx+color] = uint16((sum + uint32(count)/2) / uint32(count))
+				}
+				// 标记为已修复
+				isBadPixel[r*width+c] = false
+				fixedInPass++
+			} else {
+				// 无法修复，留到下一轮
+				stillBadPixels = append(stillBadPixels, bp)
+			}
+		}
+
+		debug("坏点修复第 %d 轮: %d 个已修复, %d 个剩余", pass, fixedInPass, len(stillBadPixels))
+		pass++
+
+		if fixedInPass == 0 {
+			if !fixCorner {
+				// 如果第一轮没有修复任何像素，则在下一轮放宽条件
+				fixCorner = true
+			} else {
+				// 如果放宽条件后仍然无法修复，则放弃以避免死循环
+				if len(stillBadPixels) > 0 {
+					fmt.Printf("无法修复 %d 个坏点\n", len(stillBadPixels))
+				}
+				break
+			}
+		}
+		remainingBadPixels = stillBadPixels
+	}
 }

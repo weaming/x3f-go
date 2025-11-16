@@ -346,28 +346,8 @@ func PreprocessData(file *File, section *ImageSection, wb string) (string, error
 
 	// 坏点修复（在预处理之后）
 	badPixels := CollectBadPixels(file, decodedWidth, decodedHeight, 3)
-	// 使用 OpenCV inpaint 修复坏点（TELEA 算法，快速且质量好）
-	InpaintBadPixelsWithOpenCV(section.DecodedData, decodedWidth, decodedHeight, 3, badPixels, InpaintTELEA)
-
-	// V median filtering（仅对非 Quattro 格式）
-	// 对于 Quattro，T 通道在这个阶段还没有完全准备好，不能执行 YUV 转换
-	if !isQuattro {
-		x0, y0, x1, y1, ok := file.GetCAMFRectScaled("ActiveImageArea", decodedWidth, decodedHeight, true)
-		if !ok {
-			// 如果没有 ActiveImageArea，使用整个图像
-			x0, y0 = 0, 0
-			x1, y1 = decodedWidth-1, decodedHeight-1
-			debug("Could not get active area, using entire image for V median filter")
-		}
-
-		debug("V median filtering on active area [%d,%d,%d,%d]", x0, y0, x1, y1)
-		// 注意: 必须对整个图像做色彩空间转换,因为中值滤波需要访问边界外的像素
-		BMT_to_YUV_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
-		VMedianFilterArea(section.DecodedData, decodedWidth, decodedHeight, 3, x0, y0, x1, y1)
-		YUV_to_BMT_STD(section.DecodedData, decodedWidth, decodedHeight, 3)
-	} else {
-		debug("Skip V median filtering for Quattro format (T channel not ready)")
-	}
+	// 使用纯 Go 实现的插值算法修复坏点
+	InpaintBadPixels(section.DecodedData, decodedWidth, decodedHeight, 3, badPixels)
 
 	// 构建返回信息
 	channelInfo := "3通道"
@@ -508,6 +488,15 @@ func PreprocessQuattroTop(file *File, section *ImageSection, wb string) error {
 	}
 
 	debug("PreprocessQuattroTop: completed")
+
+	// C 版本在这里对 qtop 执行了坏点修复
+	// if (fix_bad) interpolate_bad_pixels(x3f, &qtop, 1);
+	debug("PreprocessQuattroTop: fixing bad pixels on top layer")
+	qtopBadPixels := CollectBadPixels(file, uint32(section.QuattroTopCols), uint32(section.QuattroTopRows), 1)
+	if len(qtopBadPixels) > 0 {
+		InpaintBadPixels(section.QuattroTopData, uint32(section.QuattroTopCols), uint32(section.QuattroTopRows), 1, qtopBadPixels)
+		debug("PreprocessQuattroTop: fixed %d bad pixels on top layer", len(qtopBadPixels))
+	}
 
 	return nil
 }
