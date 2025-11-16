@@ -20,32 +20,30 @@ type PreprocessedData struct {
 	IntermediateBias float64
 	MaxIntermediate  [3]uint32
 	BlackLevel       BlackLevelInfo
-	// 白平衡类型
-	WhiteBalance string
 }
 
-// PreprocessImage 对图像进行预处理，包括 Quattro expand（如果适用）
+// PreProcessImage 对图像进行预处理，包括 Quattro expand（如果适用）
 // 这是 DNG 和 PPM 输出的共同前置处理流程
-func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOptions, logger *Logger) (*PreprocessedData, error) {
+func PreProcessImage(file *File, rawSection *ImageSection, profile PreProcessOptions, logger *Logger) (*PreprocessedData, error) {
 	// ==================== 阶段1: 解码图像 ====================
 
 	// 1.1 解码图像（如果还没解码）
-	if imageSection.DecodedData == nil {
-		logger.Step("1️⃣  解码 RAW", fmt.Sprintf("%dx%d", imageSection.Columns, imageSection.Rows))
-		if err := imageSection.DecodeImage(); err != nil {
+	if rawSection.DecodedData == nil {
+		logger.Step("1️⃣  解码 RAW", fmt.Sprintf("%dx%d", rawSection.Columns, rawSection.Rows))
+		if err := rawSection.DecodeImage(); err != nil {
 			return nil, fmt.Errorf("解码失败: %w", err)
 		}
-		logger.Done(fmt.Sprintf("%d 像素", len(imageSection.DecodedData)/3))
+		logger.Done(fmt.Sprintf("%d 像素", len(rawSection.DecodedData)/3))
 	}
 
 	// ==================== 阶段2: 准备预处理参数 ====================
 
 	// 2.1 获取白平衡
-	wb := profile.WhiteBalanceType
+	wb := profile.WhiteBalance
 
 	// 2.2 计算黑电平
 	logger.Step("2️⃣  计算黑电平", fmt.Sprintf("WB=%s", wb))
-	blackLevel, err := CalculateBlackLevel(file, imageSection)
+	blackLevel, err := CalculateBlackLevel(file, rawSection)
 	if err != nil {
 		return nil, fmt.Errorf("计算黑电平失败: %w", err)
 	}
@@ -64,31 +62,30 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 	if !ok {
 		return nil, fmt.Errorf("获取 max intermediate 失败")
 	}
-	logger.Done(fmt.Sprintf("Bias:%.0f Max R:%d G:%d B:%d",
-		intermediateBias, maxIntermediate[0], maxIntermediate[1], maxIntermediate[2]))
+	logger.Done(fmt.Sprintf("Bias:%.0f Max R:%d G:%d B:%d", intermediateBias, maxIntermediate[0], maxIntermediate[1], maxIntermediate[2]))
 
 	// ==================== 阶段3: 应用预处理转换 ====================
 
 	// 3.1 应用预处理（黑电平校正、intermediate bias、scale 转换）
 	logger.Step("4️⃣  应用预处理转换", "")
-	preprocessInfo, err := PreprocessData(file, imageSection, wb)
+	preprocessInfo, err := PreprocessData(file, rawSection, wb)
 	if err != nil {
 		return nil, fmt.Errorf("预处理失败: %w", err)
 	}
 	logger.Done(preprocessInfo)
 
 	// 3.2 应用降噪（标准模式：非 Quattro）
-	isQuattro := imageSection.QuattroTopData != nil && len(imageSection.QuattroTopData) > 0
+	isQuattro := rawSection.QuattroTopData != nil && len(rawSection.QuattroTopData) > 0
 	if profile.Denoise && !isQuattro {
 		logger.Step("🔇 应用降噪")
 		denoiseType := DetectDenoiseType(file)
 
 		area := &Area16{
-			Data:      imageSection.DecodedData,
-			Rows:      imageSection.DecodedRows,
-			Columns:   imageSection.DecodedColumns,
+			Data:      rawSection.DecodedData,
+			Rows:      rawSection.DecodedRows,
+			Columns:   rawSection.DecodedColumns,
 			Channels:  3,
-			RowStride: imageSection.DecodedColumns * 3,
+			RowStride: rawSection.DecodedColumns * 3,
 		}
 
 		Denoise(area, denoiseType)
@@ -121,13 +118,13 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 		}
 
 		// 计算实际使用的 qtop 尺寸（会被裁剪）
-		qtopUsedWidth := int(imageSection.DecodedColumns) * 2
-		qtopUsedHeight := int(imageSection.DecodedRows) * 2
-		if qtopUsedWidth > imageSection.QuattroTopCols {
-			qtopUsedWidth = imageSection.QuattroTopCols
+		qtopUsedWidth := int(rawSection.DecodedColumns) * 2
+		qtopUsedHeight := int(rawSection.DecodedRows) * 2
+		if qtopUsedWidth > rawSection.QuattroTopCols {
+			qtopUsedWidth = rawSection.QuattroTopCols
 		}
-		if qtopUsedHeight > imageSection.QuattroTopRows {
-			qtopUsedHeight = imageSection.QuattroTopRows
+		if qtopUsedHeight > rawSection.QuattroTopRows {
+			qtopUsedHeight = rawSection.QuattroTopRows
 		}
 
 		denoiseInfo := ""
@@ -137,14 +134,14 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 
 		logger.Step("5️⃣  Quattro Expand",
 			fmt.Sprintf("BMT %dx%d + Top %dx%d (原始%dx%d) → 扩展 %dx%d%s",
-				imageSection.DecodedColumns, imageSection.DecodedRows,
+				rawSection.DecodedColumns, rawSection.DecodedRows,
 				qtopUsedWidth, qtopUsedHeight,
-				imageSection.QuattroTopCols, imageSection.QuattroTopRows,
-				imageSection.DecodedColumns*2, imageSection.DecodedRows*2,
+				rawSection.QuattroTopCols, rawSection.QuattroTopRows,
+				rawSection.DecodedColumns*2, rawSection.DecodedRows*2,
 				denoiseInfo))
 
 		// 对 Quattro top 层也应用预处理
-		if err := PreprocessQuattroTop(file, imageSection, wb); err != nil {
+		if err := PreprocessQuattroTop(file, rawSection, wb); err != nil {
 			return nil, fmt.Errorf("top 层预处理失败: %w", err)
 		}
 
@@ -152,16 +149,16 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 		if profile.Denoise {
 			// 使用带降噪的 expand
 			image := &Area16{
-				Data:      imageSection.DecodedData,
-				Rows:      imageSection.DecodedRows,
-				Columns:   imageSection.DecodedColumns,
+				Data:      rawSection.DecodedData,
+				Rows:      rawSection.DecodedRows,
+				Columns:   rawSection.DecodedColumns,
 				Channels:  3,
-				RowStride: imageSection.DecodedColumns * 3,
+				RowStride: rawSection.DecodedColumns * 3,
 			}
 
 			// 计算 expanded 尺寸
-			expandedWidth = int(imageSection.DecodedColumns) * 2
-			expandedHeight = int(imageSection.DecodedRows) * 2
+			expandedWidth = int(rawSection.DecodedColumns) * 2
+			expandedHeight = int(rawSection.DecodedRows) * 2
 
 			// C 版本会先裁剪 qtop 到 expanded 尺寸
 			// rect[0] = 0, rect[1] = 0
@@ -169,19 +166,19 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 			// rect[3] = 2*image.rows - 1
 			qtopWidth := expandedWidth
 			qtopHeight := expandedHeight
-			if qtopWidth > imageSection.QuattroTopCols {
-				qtopWidth = imageSection.QuattroTopCols
+			if qtopWidth > rawSection.QuattroTopCols {
+				qtopWidth = rawSection.QuattroTopCols
 			}
-			if qtopHeight > imageSection.QuattroTopRows {
-				qtopHeight = imageSection.QuattroTopRows
+			if qtopHeight > rawSection.QuattroTopRows {
+				qtopHeight = rawSection.QuattroTopRows
 			}
 
 			qtop := &Area16{
-				Data:      imageSection.QuattroTopData,
+				Data:      rawSection.QuattroTopData,
 				Rows:      uint32(qtopHeight),
 				Columns:   uint32(qtopWidth),
 				Channels:  1,
-				RowStride: uint32(imageSection.QuattroTopCols), // stride 保持原始值
+				RowStride: uint32(rawSection.QuattroTopCols), // stride 保持原始值
 			}
 
 			expandedData = make([]uint16, expandedWidth*expandedHeight*3)
@@ -197,7 +194,7 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 			// 获取 active 区域（从低分辨率 image 中裁剪）
 			var active *Area16
 			if ax0, ay0, ax1, ay1, ok := file.GetCAMFRectScaled("ActiveImageArea",
-				imageSection.DecodedColumns, imageSection.DecodedRows, true); ok {
+				rawSection.DecodedColumns, rawSection.DecodedRows, true); ok {
 				active = &Area16{
 					Data:      image.Data, // 共享数据
 					Rows:      ay1 - ay0 + 1,
@@ -237,15 +234,15 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 		} else {
 			// 使用标准 expand（不降噪）
 			expandedData = ExpandQuattro(
-				imageSection.DecodedData,
-				int(imageSection.DecodedColumns),
-				int(imageSection.DecodedRows),
-				imageSection.QuattroTopData,
-				imageSection.QuattroTopCols,
-				imageSection.QuattroTopRows,
+				rawSection.DecodedData,
+				int(rawSection.DecodedColumns),
+				int(rawSection.DecodedRows),
+				rawSection.QuattroTopData,
+				rawSection.QuattroTopCols,
+				rawSection.QuattroTopRows,
 			)
-			expandedWidth = int(imageSection.DecodedColumns) * 2
-			expandedHeight = int(imageSection.DecodedRows) * 2
+			expandedWidth = int(rawSection.DecodedColumns) * 2
+			expandedHeight = int(rawSection.DecodedRows) * 2
 		}
 
 		isExpanded = true
@@ -265,14 +262,14 @@ func PreprocessImage(file *File, imageSection *ImageSection, profile ProcessOpti
 		height = uint32(expandedHeight)
 	} else {
 		// 使用原始数据
-		dataToUse = imageSection.DecodedData
-		width = imageSection.Columns
-		height = imageSection.Rows
-		if imageSection.DecodedColumns > 0 {
-			width = imageSection.DecodedColumns
+		dataToUse = rawSection.DecodedData
+		width = rawSection.Columns
+		height = rawSection.Rows
+		if rawSection.DecodedColumns > 0 {
+			width = rawSection.DecodedColumns
 		}
-		if imageSection.DecodedRows > 0 {
-			height = imageSection.DecodedRows
+		if rawSection.DecodedRows > 0 {
+			height = rawSection.DecodedRows
 		}
 	}
 

@@ -100,18 +100,17 @@ func ExportRawPPM(imageSection *x3f.ImageSection, file *x3f.File, outputPath str
 
 // ExportPreprocessedPPM 导出预处理后并进行色彩转换的数据为 PPM
 // 用于对比 C 版本的默认 PPM 输出（预处理 + expand + 色彩转换 + gamma校正）
-func ExportPreprocessedPPM(imageSection *x3f.ImageSection, file *x3f.File, outputPath string, noCrop bool, wb string) error {
+func ExportPreprocessedPPM(rawSection *x3f.ImageSection, file *x3f.File, outputPath string, noCrop bool, wb string) error {
 	// 使用共享的预处理函数
 	// PPM 导出不需要详细日志，使用空 logger
 	logger := x3f.NewLogger()
 
-	profile := x3f.ProcessOptions{
-		WhiteBalanceType: wb,
-		Denoise:          false, // PPM 不使用降噪（调试格式）
-		NoCrop:           noCrop,
+	opts := x3f.PreProcessOptions{
+		WhiteBalance: wb,
+		Denoise:      false, // PPM 不使用降噪（调试格式）
 	}
 
-	preprocessed, err := x3f.PreprocessImage(file, imageSection, profile, logger)
+	preprocessed, err := x3f.PreProcessImage(file, rawSection, opts, logger)
 	if err != nil {
 		return err
 	}

@@ -331,7 +331,7 @@ type TIFFOptions struct {
 }
 
 // ExportTIFF 从 CommonData 导出 TIFF
-func ExportTIFF(c *CommonData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
+func ExportTIFF(c *FinalData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
 	// 应用后处理（曝光补偿、色调映射、gamma）
 	img := applyPostProcessing(c.ImgData, c.Dims, config)
 
@@ -343,10 +343,7 @@ func ExportTIFF(c *CommonData, x3fFile *x3f.File, config Config, filename string
 		Exif:     exif,
 	}
 
-	logger.Step("写入 TIFF")
-	if config.Verbose {
-		fmt.Printf("写入 TIFF 文件: %s\n", filename)
-	}
+	logger.Step("写入 TIFF", filename)
 
 	err := WriteTIFF(img, filename, tiffOpts)
 	if err != nil {

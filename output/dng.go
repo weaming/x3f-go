@@ -422,7 +422,7 @@ type imageDimensions struct {
 }
 
 // 导出未经色彩处理的线性 RAW DNG
-func ExportRawDNG(c *CommonData, x3fFile *x3f.File, filename string, cameraInfo x3f.CameraInfo, logger *x3f.Logger) error {
+func ExportRawDNG(c *FinalData, x3fFile *x3f.File, filename string, cameraInfo x3f.CameraInfo, logger *x3f.Logger) error {
 	file := createDNGFile(filename)
 	defer file.Close()
 

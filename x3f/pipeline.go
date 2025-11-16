@@ -36,27 +36,6 @@ func (img *ProcessedImage) ToUint8() []uint8 {
 	return result
 }
 
-// ProcessImage 统一的图像处理入口，用于所有输出格式
-// 返回预处理数据（intermediate 数据，uint16）
-func ProcessImage(file *File, opts ProcessOptions, logger *Logger) (*PreprocessedData, error) {
-	// 查找 RAW 图像段
-	rawSection, err := file.LoadRawImageSection(logger)
-	if err != nil {
-		return nil, err
-	}
-
-	// 使用预处理流程（包括黑电平、intermediate、Quattro Expand）
-	preprocessed, err := PreprocessImage(file, rawSection, opts, logger)
-	if err != nil {
-		return nil, fmt.Errorf("预处理失败: %w", err)
-	}
-
-	// 保存白平衡类型，供后续使用
-	preprocessed.WhiteBalance = opts.WhiteBalanceType
-
-	return preprocessed, nil
-}
-
 // LoadRawImageSection 查找并加载 RAW 图像段
 func (f *File) LoadRawImageSection(logger *Logger) (*ImageSection, error) {
 	logger.Step("加载图像段")

@@ -11,7 +11,7 @@ import (
 )
 
 // ExportJPEG 从 CommonData 导出 JPEG
-func ExportJPEG(c *CommonData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
+func ExportJPEG(c *FinalData, x3fFile *x3f.File, config Config, filename string, logger *x3f.Logger) error {
 	// 验证 JPEG 质量参数
 	quality := config.Quality
 	if quality < 1 || quality > 100 {
@@ -19,13 +19,12 @@ func ExportJPEG(c *CommonData, x3fFile *x3f.File, config Config, filename string
 	}
 
 	// 应用后处理（曝光补偿、色调映射、gamma）
+	logger.Step("6️⃣  应用曝光补偿、色调映射、gamma",
+		fmt.Sprintf("%v %v %v", config.ExposureValue, config.ToneMapping, config.ColorSpace))
 	img := applyPostProcessing(c.ImgData, c.Dims, config)
+	logger.Done("完成")
 
-	logger.Step("写入 JPEG")
-	if config.Verbose {
-		fmt.Printf("写入 JPEG 文件: %s\n", filename)
-	}
-
+	logger.Step("写入 JPEG", filename)
 	err := WriteJPEG(img, filename, &jpeg.Options{Quality: quality})
 	if err != nil {
 		return err
@@ -35,7 +34,6 @@ func ExportJPEG(c *CommonData, x3fFile *x3f.File, config Config, filename string
 	return nil
 }
 
-// 写入 JPEG 文件
 func WriteJPEG(img *x3f.ProcessedImage, filename string, opts *jpeg.Options) error {
 	if img == nil {
 		return fmt.Errorf("图像为空")

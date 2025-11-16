@@ -39,7 +39,6 @@ func parseFlags() output.Config {
 	flag.StringVar(&config.WhiteBalance, "wb", "Auto",
 		"白平衡: Auto, Sunlight, Shadow, Overcast, Incandescent, Florescent, Flash, Custom, ColorTemp, AutoLSP")
 	flag.StringVar(&config.ToneMapping, "tm", "agx", "色调映射: agx, aces, none")
-	flag.BoolVar(&config.Verbose, "v", false, "详细输出")
 	flag.BoolVar(&config.NoCrop, "no-crop", false, "不裁剪，输出完整解码数据")
 	flag.BoolVar(&config.CompatibleWithC, "c", false, "C 兼容模式：生成与 C 版本完全相同的输出（仅 ppm）")
 	flag.BoolVar(&config.DumpMeta, "meta", false, "输出元数据到 <输入文件>.meta")
@@ -89,11 +88,15 @@ func run(config output.Config) error {
 
 	// 步骤 2: 加载元数据
 	logger.Step("加载元数据")
-	if err := x3fFile.LoadSection(x3f.SECp); err != nil && config.Verbose {
-		logger.Warn("属性段加载失败")
+	if err := x3fFile.LoadSection(x3f.SECp); err != nil {
+		logger.Step("属性段加载失败")
+	} else {
+		logger.Step("属性段加载成功")
 	}
-	if err := x3fFile.LoadSection(x3f.SECc); err != nil && config.Verbose {
-		logger.Warn("CAMF 段加载失败")
+	if err := x3fFile.LoadSection(x3f.SECc); err != nil {
+		logger.Step("CAMF 段加载失败")
+	} else {
+		logger.Step("CAMF 段加载成功")
 	}
 	logger.Done("完成")
 
@@ -107,10 +110,7 @@ func run(config output.Config) error {
 
 	// 确定输出格式
 	outputExt := strings.ToLower(filepath.Ext(config.Output))
-	if config.Verbose {
-		logger.Info("输出: %s, 色彩空间: %s, 白平衡: %s",
-			outputExt, config.ColorSpace, config.WhiteBalance)
-	}
+	logger.Info("输出: %s, 色彩空间: %s, 白平衡: %s", outputExt, config.ColorSpace, config.WhiteBalance)
 
 	// 检查 -c 参数只能用于 ppm 格式
 	if config.CompatibleWithC && outputExt != ".ppm" {
@@ -142,18 +142,14 @@ func convertToDNG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) e
 	// 提取相机信息
 	logger.Step("准备 DNG 元数据")
 	cameraInfo := x3f.ExtractCameraInfo(x3fFile, config.WhiteBalance)
-	logger.Done(cameraInfo.Model)
-
-	logger.Step("写入 DNG")
-	if config.Verbose {
-		fmt.Printf("写入 DNG 文件: %s\n", config.Output)
-	}
+	logger.Done(fmt.Sprintf("型号 %s", cameraInfo.Model))
 
 	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
 	}
 
+	logger.Step("写入 DNG", config.Output)
 	err = output.ExportRawDNG(commonData, x3fFile, config.Output, cameraInfo, logger)
 	if err != nil {
 		return err
@@ -164,10 +160,6 @@ func convertToDNG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) e
 }
 
 func convertToTIFF(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
-	if config.Verbose {
-		fmt.Println("转换为 TIFF...")
-	}
-
 	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
@@ -177,10 +169,6 @@ func convertToTIFF(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) 
 }
 
 func convertToJPEG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
-	if config.Verbose {
-		fmt.Println("转换为 JPEG...")
-	}
-
 	commonData, err := output.ProcessAll(x3fFile, config, logger)
 	if err != nil {
 		return err
@@ -191,17 +179,11 @@ func convertToJPEG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) 
 
 func convertToPPM(x3fFile *x3f.File, config output.Config) error {
 	if config.Qtop {
-		if config.Verbose {
-			fmt.Println("转换为 PPM（Quattro top 层数据）...")
-		}
+		fmt.Println("转换为 PPM（Quattro top 层数据）...")
 	} else if config.Unprocessed {
-		if config.Verbose {
-			fmt.Println("转换为 PPM（未处理的 RAW 数据）...")
-		}
+		fmt.Println("转换为 PPM（未处理的 RAW 数据）...")
 	} else {
-		if config.Verbose {
-			fmt.Println("转换为 PPM（预处理后的数据）...")
-		}
+		fmt.Println("转换为 PPM（预处理后的数据）...")
 	}
 
 	// 加载 RAW 图像段
@@ -211,9 +193,7 @@ func convertToPPM(x3fFile *x3f.File, config output.Config) error {
 		return err
 	}
 
-	if config.Verbose {
-		fmt.Printf("写入 PPM 文件: %s\n", config.Output)
-	}
+	fmt.Printf("写入 PPM: %s\n", config.Output)
 
 	if config.Qtop {
 		// 导出 Quattro top 层数据
@@ -223,10 +203,6 @@ func convertToPPM(x3fFile *x3f.File, config output.Config) error {
 		return output.ExportRawPPM(rawSection, x3fFile, config.Output, config.NoCrop)
 	} else {
 		// 导出预处理后的数据
-		wb := config.WhiteBalance
-		if wb == "" {
-			wb = x3fFile.GetWhiteBalance()
-		}
-		return output.ExportPreprocessedPPM(rawSection, x3fFile, config.Output, config.NoCrop, wb)
+		return output.ExportPreprocessedPPM(rawSection, x3fFile, config.Output, config.NoCrop, config.WhiteBalance)
 	}
 }

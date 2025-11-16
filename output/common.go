@@ -13,7 +13,6 @@ type Config struct {
 	ColorSpace      string
 	WhiteBalance    string
 	ToneMapping     string
-	Verbose         bool
 	NoCrop          bool
 	CompatibleWithC bool
 	DumpMeta        bool
@@ -29,22 +28,21 @@ var stdLevels = x3f.ImageLevels{
 	White: [3]uint32{65535, 65535, 65535},
 }
 
-type CommonData struct {
-	PreData *x3f.PreprocessedData
+type FinalData struct {
 	ImgData []byte
 	Dims    imageDimensions
 }
 
-func ProcessAll(x3fFile *x3f.File, config Config, logger *x3f.Logger) (*CommonData, error) {
-	wb := config.WhiteBalance
-	opts := x3f.ProcessOptions{
-		WhiteBalanceType: wb,
-		Denoise:          !config.NoDenoise,
-		NoCrop:           config.NoCrop,
+func ProcessAll(x3fFile *x3f.File, config Config, logger *x3f.Logger) (*FinalData, error) {
+	// 加载 RAW 图像段（用于 DNG 元数据）
+	rawSection, err := x3fFile.LoadRawImageSection(logger)
+	if err != nil {
+		return nil, err
 	}
 
 	// 使用 ProcessImage 进行预处理（返回 intermediate 数据）
-	preData, err := x3f.ProcessImage(x3fFile, opts, logger)
+	opts := x3f.PreProcessOptions{WhiteBalance: config.WhiteBalance, Denoise: !config.NoDenoise}
+	preData, err := x3f.PreProcessImage(x3fFile, rawSection, opts, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -52,12 +50,6 @@ func ProcessAll(x3fFile *x3f.File, config Config, logger *x3f.Logger) (*CommonDa
 	// intermediate 数据（uint16）
 	if preData.DataUint16 == nil {
 		panic(fmt.Errorf("intermediate 数据为空"))
-	}
-
-	// 加载 RAW 图像段（用于 DNG 元数据）
-	rawSection, err := x3fFile.LoadRawImageSection(logger)
-	if err != nil {
-		return nil, err
 	}
 
 	dims := calculateDimensions(rawSection, x3fFile, preData, !config.NoCrop)
@@ -68,8 +60,7 @@ func ProcessAll(x3fFile *x3f.File, config Config, logger *x3f.Logger) (*CommonDa
 	// 应用色彩转换：intermediate → linear sRGB
 	applyIntermediateToSRGB(imageData, dims, x3fFile, config.WhiteBalance, preData)
 
-	return &CommonData{
-		PreData: preData,
+	return &FinalData{
 		ImgData: imageData,
 		Dims:    dims,
 	}, nil

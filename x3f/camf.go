@@ -87,7 +87,7 @@ type CAMFEntry struct {
 	MatrixElementSize uint32
 	MatrixElements    uint32
 	MatrixData        []byte
-	MatrixDecoded     interface{} // []float64 or []uint32 or []int32
+	MatrixDecoded     any // []float64 or []uint32 or []int32
 }
 
 // CAMFData CAMF 数据段
@@ -716,7 +716,7 @@ func (f *File) GetCAMFInt32Vector(name string, expectedSize uint32) ([]int32, bo
 }
 
 // 获取矩阵（通用方法）
-func (f *File) GetCAMFMatrix(name string) (interface{}, []uint32, bool) {
+func (f *File) GetCAMFMatrix(name string) (any, []uint32, bool) {
 	if f.CAMFSection == nil {
 		return nil, nil, false
 	}

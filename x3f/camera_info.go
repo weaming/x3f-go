@@ -1,27 +1,20 @@
 package x3f
 
-// ProcessOptions 预处理选项
-// 用于 ProcessImage，包含预处理阶段的参数
-type ProcessOptions struct {
-	WhiteBalanceType string // 白平衡类型名称（如 "Auto", "Sunlight"）
-	Denoise          bool   // 是否应用降噪
-	NoCrop           bool   // 是否裁剪
+// 预处理选项
+type PreProcessOptions struct {
+	WhiteBalance string // 白平衡类型名称（如 "Auto", "Sunlight"）
+	Denoise      bool   // 是否应用降噪
 }
 
-// CameraInfo 相机信息和色彩配置
-// 包含所有输出格式都需要的元数据和色彩信息
+// 相机信息和色彩配置，包含所有输出格式都需要的元数据和色彩信息
 type CameraInfo struct {
 	// 相机元数据
-	Model  string // 相机型号
-	Serial string // 相机序列号
+	Model string // 相机型号
 
 	// 色彩信息
+	WhiteBalance string    // 白平衡类型名称
 	ColorMatrix  Matrix3x3 // 色彩矩阵 (RAW → XYZ)
 	WBGain       Vector3   // 白平衡增益
-	WhiteBalance string    // 白平衡类型名称
-
-	// 曝光信息
-	BaselineExposure float64 // 基线曝光
 }
 
 // ExifInfo EXIF 拍摄参数
@@ -45,27 +38,19 @@ func ExtractCameraInfo(file *File, wb string) CameraInfo {
 		info.Model = "Sigma X3F"
 	}
 
-	// 获取相机序列号
-	if serial, ok := file.GetProperty("CAMSERIAL"); ok {
-		info.Serial = serial
-	}
-
 	// 获取色彩矩阵
-	if matrix, ok := file.GetColorMatrix(wb); ok {
+	if matrix, ok := file.GetColorMatrix(info.WhiteBalance); ok {
 		info.ColorMatrix = matrix
 	} else {
 		info.ColorMatrix = Identity3x3()
 	}
 
 	// 获取白平衡增益
-	if gain, ok := file.GetWhiteBalanceGain(wb); ok {
+	if gain, ok := file.GetWhiteBalanceGain(info.WhiteBalance); ok {
 		info.WBGain = gain
 	} else {
 		info.WBGain = DefaultWhiteBalanceGain
 	}
-
-	// 默认基线曝光
-	info.BaselineExposure = 1.0
 
 	return info
 }

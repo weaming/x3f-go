@@ -21,7 +21,7 @@ func NewLogger() *Logger {
 
 // Step 开始一个处理步骤
 // 格式: [步骤名] 参数 ...
-func (l *Logger) Step(name string, params ...interface{}) {
+func (l *Logger) Step(name string, params ...any) {
 	l.stepStart = time.Now()
 	if len(params) > 0 {
 		fmt.Printf("[%s] %v ... ", name, params[0])
@@ -48,19 +48,14 @@ func (l *Logger) Total() {
 }
 
 // Info 输出信息（不计时）
-func (l *Logger) Info(format string, args ...interface{}) {
+func (l *Logger) Info(format string, args ...any) {
 	fmt.Printf("  • "+format+"\n", args...)
-}
-
-// Warn 输出警告
-func (l *Logger) Warn(format string, args ...interface{}) {
-	fmt.Printf("  ⚠ "+format+"\n", args...)
 }
 
 var Debug = debug
 var debugEnabled = os.Getenv("DEBUG") != ""
 
-func debug(format string, args ...interface{}) {
+func debug(format string, args ...any) {
 	if debugEnabled {
 		fmt.Printf(format+"\n", args...)
 	}
