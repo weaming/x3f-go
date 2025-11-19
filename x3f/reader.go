@@ -74,8 +74,9 @@ func (f *File) readHeader() error {
 	copy(f.Header.UniqueIdentifier[:], buf[offset:offset+16])
 	offset += 16
 
+	// https://exiftool.org/TagNames/SigmaRaw.html
 	// version < 4.0 有 mark_bits, columns, rows, rotation
-	// version >= 4.0 (Quattro) 没有这些字段
+	// version >= 4.0 (Quattro) 头部结构不同
 	if f.Header.Version < Version40 {
 		f.Header.MarkBits = le.Uint32(buf[offset : offset+4])
 		offset += 4
@@ -115,6 +116,21 @@ func (f *File) readHeader() error {
 				offset += 4
 			}
 		}
+	} else {
+		// version >= 4.0 (Quattro) 的头部结构
+		// 当前 offset = 24 (Identifier(4) + Version(4) + UniqueIdentifier(16))
+		// 根据实际文件分析：ImageWidth 在偏移 40，需跳过 16 字节
+		offset += 16
+
+		// 读取 ImageWidth, ImageHeight, Rotation
+		f.Header.Columns = le.Uint32(buf[offset : offset+4])
+		offset += 4
+
+		f.Header.Rows = le.Uint32(buf[offset : offset+4])
+		offset += 4
+
+		f.Header.Rotation = le.Uint32(buf[offset : offset+4])
+		offset += 4
 	}
 
 	return nil

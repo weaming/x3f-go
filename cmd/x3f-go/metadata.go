@@ -73,7 +73,7 @@ func dumpFileHeader(f *os.File, x3fFile *x3f.File) {
 	fmt.Fprintf(f, "  identifier        = %08x (FOVb)\n", identifier)
 	fmt.Fprintf(f, "  version           = %08x\n", h.Version)
 
-	// version < 4.0 才输出其他字段（Quattro 不输出）
+	// version < 4.0 输出完整的头部字段
 	if h.Version < x3f.Version40 {
 		// 移除末尾的 null 字节和空格
 		wb := string(h.WhiteBalance[:])
@@ -99,6 +99,12 @@ func dumpFileHeader(f *os.File, x3fFile *x3f.File) {
 		for i := 0; i < numExtData; i++ {
 			fmt.Fprintf(f, "    %2d: %3d = %9f\n", i, h.ExtendedDataTypes[i], h.ExtendedData[i])
 		}
+	} else {
+		// version >= 4.0 (Quattro) 输出简化的头部字段
+		fmt.Fprintf(f, "  unique_identifier = 30...\n")
+		fmt.Fprintf(f, "  columns           = %08x (%d)\n", h.Columns, h.Columns)
+		fmt.Fprintf(f, "  rows              = %08x (%d)\n", h.Rows, h.Rows)
+		fmt.Fprintf(f, "  rotation          = %08x (%d)\n", h.Rotation, h.Rotation)
 	}
 }
 

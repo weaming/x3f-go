@@ -101,3 +101,41 @@ type SpatialGainCorrection struct {
 	Channels  uint32
 	Gain      []float32
 }
+
+// GetEXIFOrientation 获取 EXIF Orientation 值
+// X3F Rotation 字段表示相机拍摄时的旋转角度（0, 90, 180, 270）
+//
+// EXIF Orientation 的含义（参考 TIFF 6.0 规范）：
+//
+//	1 = 正常方向（0°）- 图像顶部在上
+//	3 = 旋转 180° - 图像倒置
+//	6 = 顺时针旋转 90° - 竖拍，相机向右
+//	8 = 顺时针旋转 270°（逆时针 90°）- 竖拍，相机向左
+//
+// 映射关系：
+//
+//	X3F Rotation 0°   → EXIF Orientation 1（正常横拍）
+//	X3F Rotation 90°  → EXIF Orientation 6（竖拍，相机向右转）
+//	X3F Rotation 180° → EXIF Orientation 3（倒置）
+//	X3F Rotation 270° → EXIF Orientation 8（竖拍，相机向左转）
+func (f *File) GetEXIFOrientation() uint16 {
+	if f.Header == nil {
+		return 1
+	}
+
+	rotation := f.Header.Rotation
+
+	switch rotation {
+	case 0:
+		return 1
+	case 90:
+		return 6
+	case 180:
+		return 3
+	case 270:
+		return 8
+	default:
+		Debug("未知的 Rotation 值: %d, 默认使用 Orientation 1", rotation)
+		return 1
+	}
+}

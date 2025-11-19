@@ -658,7 +658,7 @@ func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions) []by
 func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dims imageDimensions, previewW, previewH uint32, imageLevels x3f.ImageLevels) {
 	ifd0 := NewIFDWriter(file)
 
-	addPreviewTags(ifd0, previewW, previewH)
+	addPreviewTags(ifd0, x3fFile, previewW, previewH)
 	addDNGVersionTags(ifd0)
 	addColorMatrixTags(ifd0, x3fFile, opts, imageLevels)
 	addProfileTags(ifd0, x3fFile, wb, opts)
@@ -669,7 +669,9 @@ func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dim
 }
 
 // 添加预览图相关标签
-func addPreviewTags(ifd0 *IFDWriter, previewW, previewH uint32) {
+func addPreviewTags(ifd0 *IFDWriter, x3fFile *x3f.File, previewW, previewH uint32) {
+	orientation := x3fFile.GetEXIFOrientation()
+
 	ifd0.AddLong(TagNewSubfileType, 1)
 	ifd0.AddLong(TagImageWidth, previewW)
 	ifd0.AddLong(TagImageLength, previewH)
@@ -677,7 +679,7 @@ func addPreviewTags(ifd0 *IFDWriter, previewW, previewH uint32) {
 	ifd0.AddShort(TagCompression, 1)
 	ifd0.AddShort(TagPhotometricInterpret, PhotometricRGB)
 	ifd0.ReservePointer(TagStripOffsets)
-	ifd0.AddShort(TagOrientation, 1)
+	ifd0.AddShort(TagOrientation, orientation)
 	ifd0.AddShort(TagSamplesPerPixel, 3)
 	ifd0.AddLong(TagRowsPerStrip, previewH)
 	ifd0.AddLong(TagStripByteCounts, previewW*previewH*3)
