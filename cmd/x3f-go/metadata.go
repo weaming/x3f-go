@@ -42,6 +42,26 @@ func dumpMetadata(x3fFile *x3f.File, config output.Config) error {
 	return nil
 }
 
+func dumpCAMFToFile(x3fFile *x3f.File, outputPath string) error {
+	f, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("无法创建 CAMF 文件: %w", err)
+	}
+	defer f.Close()
+
+	if x3fFile.CAMFSection == nil {
+		fmt.Fprintf(f, "INFO: No CAMF data found\n")
+		return nil
+	}
+
+	fmt.Fprintf(f, "BEGIN: CAMF meta data (human-readable format)\n\n")
+	// 使用 0 表示输出所有元素，不限制
+	dumpCAMFMetadataWithLimit(f, x3fFile, 0)
+	fmt.Fprintf(f, "END: CAMF meta data\n")
+
+	return nil
+}
+
 func dumpFileHeader(f *os.File, x3fFile *x3f.File) {
 	h := x3fFile.Header
 
@@ -69,8 +89,14 @@ func dumpFileHeader(f *os.File, x3fFile *x3f.File) {
 		fmt.Fprintf(f, "  white_balance     = %s\n", wb)
 		fmt.Fprintf(f, "  color_mode        = %s\n", cm)
 
+		// 确定 extended data 的数量
+		numExtData := x3f.NumExtData21
+		if h.Version >= x3f.Version30 {
+			numExtData = x3f.NumExtData30
+		}
+
 		fmt.Fprintf(f, "  extended_types\n")
-		for i := 0; i < 32; i++ {
+		for i := 0; i < numExtData; i++ {
 			fmt.Fprintf(f, "    %2d: %3d = %9f\n", i, h.ExtendedDataTypes[i], h.ExtendedData[i])
 		}
 	}
@@ -92,6 +118,10 @@ func trimNullAndSpace(s string) string {
 }
 
 func dumpCAMFMetadata(f *os.File, x3fFile *x3f.File) {
+	dumpCAMFMetadataWithLimit(f, x3fFile, 100)
+}
+
+func dumpCAMFMetadataWithLimit(f *os.File, x3fFile *x3f.File, maxElements int) {
 	if x3fFile.CAMFSection == nil {
 		return
 	}
@@ -99,7 +129,7 @@ func dumpCAMFMetadata(f *os.File, x3fFile *x3f.File) {
 	for _, entry := range x3fFile.CAMFSection.Entries {
 		switch entry.ID {
 		case x3f.CMbM: // Matrix
-			dumpCAMFMatrix(f, entry)
+			dumpCAMFMatrixWithLimit(f, entry, maxElements)
 		case x3f.CMbT: // Text
 			dumpCAMFText(f, entry)
 		case x3f.CMbP: // Property list
@@ -109,6 +139,10 @@ func dumpCAMFMetadata(f *os.File, x3fFile *x3f.File) {
 }
 
 func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
+	dumpCAMFMatrixWithLimit(f, entry, 100)
+}
+
+func dumpCAMFMatrixWithLimit(f *os.File, entry *x3f.CAMFEntry, maxElements int) {
 	fmt.Fprintf(f, "BEGIN: CAMF matrix meta data (%s)\n", entry.Name)
 
 	// 确定类型名称
@@ -128,8 +162,8 @@ func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
 		typeName = "unknown"
 	}
 
-	// 打印维度 - 匹配C版本格式
-	fmt.Fprintf(f, "%s ", typeName)
+	// 打印维度
+	fmt.Fprintf(f, "%s", typeName)
 	for i := range entry.MatrixDims {
 		fmt.Fprintf(f, "[%d]", entry.MatrixDims[i].Size)
 	}
@@ -138,15 +172,39 @@ func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
 	// 打印维度名称 - 匹配C版本的顺序
 	dim := len(entry.MatrixDims)
 	if dim == 1 {
-		fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[0].Name)
+		if entry.MatrixDims[0].Name != "" {
+			fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[0].Name)
+		} else {
+			fmt.Fprintf(f, "x:\n")
+		}
 	} else if dim == 2 {
 		// x 对应最后一个维度, y 对应第一个维度
-		fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[1].Name)
-		fmt.Fprintf(f, "y: %s\n", entry.MatrixDims[0].Name)
+		if entry.MatrixDims[1].Name != "" {
+			fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[1].Name)
+		} else {
+			fmt.Fprintf(f, "x:\n")
+		}
+		if entry.MatrixDims[0].Name != "" {
+			fmt.Fprintf(f, "y: %s\n", entry.MatrixDims[0].Name)
+		} else {
+			fmt.Fprintf(f, "y:\n")
+		}
 	} else if dim >= 3 {
-		fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[2].Name)
-		fmt.Fprintf(f, "y: %s\n", entry.MatrixDims[1].Name)
-		fmt.Fprintf(f, "z: %s (i.e. group)\n", entry.MatrixDims[0].Name)
+		if entry.MatrixDims[2].Name != "" {
+			fmt.Fprintf(f, "x: %s\n", entry.MatrixDims[2].Name)
+		} else {
+			fmt.Fprintf(f, "x:\n")
+		}
+		if entry.MatrixDims[1].Name != "" {
+			fmt.Fprintf(f, "y: %s\n", entry.MatrixDims[1].Name)
+		} else {
+			fmt.Fprintf(f, "y:\n")
+		}
+		if entry.MatrixDims[0].Name != "" {
+			fmt.Fprintf(f, "z: %s (i.e. group)\n", entry.MatrixDims[0].Name)
+		} else {
+			fmt.Fprintf(f, "z: (i.e. group)\n")
+		}
 	}
 
 	// 打印矩阵数据
@@ -160,11 +218,11 @@ func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
 
 		switch data := entry.MatrixDecoded.(type) {
 		case []float64:
-			printMatrixFloat(f, data, entry.MatrixDims, blocksize)
+			printMatrixFloatWithLimit(f, data, entry.MatrixDims, blocksize, maxElements)
 		case []uint32:
-			printMatrixUint(f, data, entry.MatrixDims, blocksize)
+			printMatrixUintWithLimit(f, data, entry.MatrixDims, blocksize, maxElements)
 		case []int32:
-			printMatrixInt(f, data, entry.MatrixDims, blocksize)
+			printMatrixIntWithLimit(f, data, entry.MatrixDims, blocksize, maxElements)
 		}
 	}
 
@@ -172,22 +230,27 @@ func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
 }
 
 func printMatrixFloat(f *os.File, data []float64, dims []x3f.CAMFDimEntry, blocksize uint32) {
+	printMatrixFloatWithLimit(f, data, dims, blocksize, 100)
+}
+
+func printMatrixFloatWithLimit(f *os.File, data []float64, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {
 	if len(data) == 0 {
 		return
 	}
 
-	const maxPrintedElements = 100
 	totalSize := len(data)
 	linesize := int(dims[len(dims)-1].Size)
 
 	for i, val := range data {
-		if i >= maxPrintedElements {
+		if maxPrintedElements > 0 && i >= maxPrintedElements {
 			fmt.Fprintf(f, "\n... (%d skipped) ...\n", totalSize-i)
 			break
 		}
-		fmt.Fprintf(f, "%12.6g ", val)
+		fmt.Fprintf(f, "%12.6g", val)
 		if (i+1)%linesize == 0 {
 			fmt.Fprintf(f, "\n")
+		} else {
+			fmt.Fprintf(f, " ")
 		}
 		if (i+1)%int(blocksize) == 0 {
 			fmt.Fprintf(f, "\n")
@@ -196,22 +259,27 @@ func printMatrixFloat(f *os.File, data []float64, dims []x3f.CAMFDimEntry, block
 }
 
 func printMatrixUint(f *os.File, data []uint32, dims []x3f.CAMFDimEntry, blocksize uint32) {
+	printMatrixUintWithLimit(f, data, dims, blocksize, 100)
+}
+
+func printMatrixUintWithLimit(f *os.File, data []uint32, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {
 	if len(data) == 0 {
 		return
 	}
 
-	const maxPrintedElements = 100
 	totalSize := len(data)
 	linesize := int(dims[len(dims)-1].Size)
 
 	for i, val := range data {
-		if i >= maxPrintedElements {
+		if maxPrintedElements > 0 && i >= maxPrintedElements {
 			fmt.Fprintf(f, "\n... (%d skipped) ...\n", totalSize-i)
 			break
 		}
-		fmt.Fprintf(f, "%12d ", val)
+		fmt.Fprintf(f, "%12d", val)
 		if (i+1)%linesize == 0 {
 			fmt.Fprintf(f, "\n")
+		} else {
+			fmt.Fprintf(f, " ")
 		}
 		if (i+1)%int(blocksize) == 0 {
 			fmt.Fprintf(f, "\n")
@@ -220,22 +288,27 @@ func printMatrixUint(f *os.File, data []uint32, dims []x3f.CAMFDimEntry, blocksi
 }
 
 func printMatrixInt(f *os.File, data []int32, dims []x3f.CAMFDimEntry, blocksize uint32) {
+	printMatrixIntWithLimit(f, data, dims, blocksize, 100)
+}
+
+func printMatrixIntWithLimit(f *os.File, data []int32, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {
 	if len(data) == 0 {
 		return
 	}
 
-	const maxPrintedElements = 100
 	totalSize := len(data)
 	linesize := int(dims[len(dims)-1].Size)
 
 	for i, val := range data {
-		if i >= maxPrintedElements {
+		if maxPrintedElements > 0 && i >= maxPrintedElements {
 			fmt.Fprintf(f, "\n... (%d skipped) ...\n", totalSize-i)
 			break
 		}
-		fmt.Fprintf(f, "%12d ", val)
+		fmt.Fprintf(f, "%12d", val)
 		if (i+1)%linesize == 0 {
 			fmt.Fprintf(f, "\n")
+		} else {
+			fmt.Fprintf(f, " ")
 		}
 		if (i+1)%int(blocksize) == 0 {
 			fmt.Fprintf(f, "\n")

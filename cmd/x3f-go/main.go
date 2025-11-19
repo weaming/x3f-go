@@ -128,6 +128,8 @@ func run(config output.Config) error {
 		convertErr = convertToJPEG(x3fFile, config, logger)
 	case ".ppm":
 		convertErr = convertToPPM(x3fFile, config)
+	case ".camf":
+		convertErr = convertToCAMF(x3fFile, config)
 	default:
 		return fmt.Errorf("不支持的输出格式: %s", outputExt)
 	}
@@ -205,4 +207,8 @@ func convertToPPM(x3fFile *x3f.File, config output.Config) error {
 		// 导出预处理后的数据
 		return output.ExportPreprocessedPPM(rawSection, x3fFile, config.Output, config.NoCrop, config.WhiteBalance)
 	}
+}
+
+func convertToCAMF(x3fFile *x3f.File, config output.Config) error {
+	return dumpCAMFToFile(x3fFile, config.Output)
 }
