@@ -660,7 +660,7 @@ func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dim
 
 	addPreviewTags(ifd0, previewW, previewH)
 	addDNGVersionTags(ifd0)
-	addColorMatrixTags(ifd0, x3fFile, wb, opts, imageLevels)
+	addColorMatrixTags(ifd0, x3fFile, opts, imageLevels)
 	addProfileTags(ifd0, x3fFile, wb, opts)
 
 	if _, err := ifd0.Write(); err != nil {
@@ -693,18 +693,13 @@ func addDNGVersionTags(ifd0 *IFDWriter) {
 }
 
 // 添加色彩矩阵标签
-func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptions, imageLevels x3f.ImageLevels) {
-	gainD65, ok := x3fFile.GetWhiteBalanceGain("Overcast")
-	if !ok {
-		gainD65 = opts.Camera.WBGain
-	}
-
+func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, opts DNGOptions, imageLevels x3f.ImageLevels) {
 	// Linear sRGB 模式: 使用标准 XYZ to sRGB 矩阵
 	xyzToSRGB := x3f.GetColorMatrix1()
 	ifd0.AddRationalArrayFromMatrix(TagColorMatrix1, xyzToSRGB, true)
 
-	// Camera Calibration: 使用白平衡校正
-	cameraCalibration := x3f.GetCameraCalibration1(gainD65)
+	// Camera Calibration: 已是 linear srgb
+	cameraCalibration := x3f.Identity3x3()
 	ifd0.AddRationalArrayFromMatrix(TagCameraCalibration1, cameraCalibration, true)
 
 	// AsShotNeutral: 白平衡已应用，使用中性值
@@ -717,7 +712,7 @@ func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGO
 // 添加 Profile 相关标签
 func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptions) {
 	// Linear sRGB 模式: 使用 Linear sRGB profile
-	ifd0.AddASCII(TagImageDescription, "Preprocessed linear sRGB with white balance applied. Camera Calibration matrix is for reference only.", 128)
+	ifd0.AddASCII(TagImageDescription, "Preprocessed linear sRGB with white balance applied", 128)
 
 	profileName := "Linear sRGB"
 	ifd0.AddASCII(TagAsShotProfileName, profileName, 32)
