@@ -42,12 +42,12 @@ const (
 
 // X3F format versions
 const (
-	Version20 uint32 = (2 << 16) | 0
+	Version20 uint32 = 2 << 16
 	Version21 uint32 = (2 << 16) | 1
 	Version22 uint32 = (2 << 16) | 2
 	Version23 uint32 = (2 << 16) | 3
-	Version30 uint32 = (3 << 16) | 0
-	Version40 uint32 = (4 << 16) | 0
+	Version30 uint32 = 3 << 16
+	Version40 uint32 = 4 << 16
 	Version41 uint32 = (4 << 16) | 1
 )
 
@@ -60,8 +60,8 @@ const (
 	CameraIDDP1Q uint32 = 80
 	CameraIDDP2Q uint32 = 81
 	CameraIDDP3Q uint32 = 82
-	CameraIDSDQ  uint32 = 0x0F // 15 - Sigma dp Quattro
-	CameraIDSDQH uint32 = 0x10 // 16 - Sigma dp Quattro H
+	CameraIDSDQ  uint32 = 40
+	CameraIDSDQH uint32 = 41
 )
 
 // Header sizes
@@ -80,6 +80,8 @@ const (
 // Image format type masks
 const (
 	FormatTypeQuattro uint32 = 0x23 // Quattro format identifier
+	FormatTypeSDQ     uint32 = 0x25 // SDQ format identifier
+	FormatTypeSDQH    uint32 = 0x27 // SDQH format identifier
 	FormatTypeTRUE    uint32 = 0x1E // TRUE format identifier
 	FormatTypeJPEG    uint32 = 0x02 // JPEG format identifier
 )

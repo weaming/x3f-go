@@ -1301,17 +1301,6 @@ func GetColorMatrix1() Matrix3x3 {
 	}
 }
 
-// GetCameraCalibration1 获取 DNG CameraCalibration1 (对角矩阵)
-// 包含白平衡增益信息，简单的增益倒数
-func GetCameraCalibration1(gain Vector3) Matrix3x3 {
-	// 对角矩阵：1/gain
-	return Matrix3x3{
-		1.0 / gain[0], 0, 0,
-		0, 1.0 / gain[1], 0,
-		0, 0, 1.0 / gain[2],
-	}
-}
-
 // 获取 Bradford 色适应矩阵 (D65 → D50)
 func GetD65ToD50() Matrix3x3 {
 	// Bradford chromatic adaptation matrix from D65 to D50

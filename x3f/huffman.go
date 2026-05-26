@@ -288,6 +288,26 @@ func TRUEDecodeOneColor(data []byte, rows, columns int, tree *HuffmanTree, seed 
 	return result
 }
 
+// storeTRUEPlaneData 将单通道 TRUE 解码结果写入交错三通道缓冲。
+func storeTRUEPlaneData(decodedData []uint16, colorData []uint16, planeRows, planeCols, dstRows, dstCols, color int) {
+	rowsToWrite := planeRows
+	if rowsToWrite > dstRows {
+		rowsToWrite = dstRows
+	}
+
+	for row := 0; row < rowsToWrite; row++ {
+		for col := 0; col < planeCols; col++ {
+			if col >= dstCols {
+				continue
+			}
+
+			srcIdx := row*planeCols + col
+			dstIdx := (row*dstCols+col)*3 + color
+			decodedData[dstIdx] = colorData[srcIdx]
+		}
+	}
+}
+
 // ImageSection 图像段数据
 type QuattroPlane struct {
 	Columns uint16
@@ -324,6 +344,38 @@ type ImageSection struct {
 
 	// 解码后的数据
 	DecodedData []uint16
+}
+
+// isTRUEFormat 判断图像格式是否使用 TRUE 解码路径。
+func isTRUEFormat(format uint32) bool {
+	switch format {
+	case ImageRAWTRUE, ImageRAWMerrill:
+		return true
+	case ImageRAWQuattro, ImageRAWSDQ, ImageRAWSDQH:
+		return true
+	}
+
+	return isTRUEFormatType(format) || isQuattroFormat(format)
+}
+
+// isTRUEFormatType 判断是否为裸 TRUE 格式标识。
+func isTRUEFormatType(format uint32) bool {
+	return format&0xFF == FormatTypeTRUE
+}
+
+// isQuattroFormat 判断图像格式是否包含 Quattro 布局信息。
+func isQuattroFormat(format uint32) bool {
+	switch format {
+	case ImageRAWQuattro, ImageRAWSDQ, ImageRAWSDQH:
+		return true
+	}
+
+	switch format & 0xFF {
+	case FormatTypeQuattro, FormatTypeSDQ, FormatTypeSDQH:
+		return true
+	default:
+		return false
+	}
 }
 
 // 加载图像段
@@ -384,17 +436,11 @@ func (f *File) LoadImageSection(entry *DirectoryEntry) error {
 	var loadErr error
 	var isRAWImage bool
 
-	switch formatID {
-	case ImageRAWHuffmanX530, ImageRAWHuffman10bit:
+	switch {
+	case formatID == ImageRAWHuffmanX530 || formatID == ImageRAWHuffman10bit:
 		loadErr = loadHuffmanImage(section, data[imageDataStart:])
 		isRAWImage = true
-	case ImageRAWTRUE, ImageRAWMerrill:
-		loadErr = loadTRUEImage(section, data[imageDataStart:])
-		isRAWImage = true
-	case ImageRAWQuattro, 0x00000023: // Quattro 格式
-		loadErr = loadTRUEImage(section, data[imageDataStart:])
-		isRAWImage = true
-	case 0x0000001E: // TRUE 的简化格式标识
+	case isTRUEFormat(formatID):
 		loadErr = loadTRUEImage(section, data[imageDataStart:])
 		isRAWImage = true
 	default:
@@ -546,7 +592,7 @@ func loadTRUEPlaneSizes(section *ImageSection, data []byte, offset int) (int, er
 
 func loadTRUEImage(section *ImageSection, data []byte) error {
 	offset := 0
-	isQuattro := (section.Type&0xFF == FormatTypeQuattro || section.Format&0xFF == FormatTypeQuattro)
+	isQuattro := isQuattroFormat(section.Type) || isQuattroFormat(section.Format)
 
 	debug("loadTRUEImage: isQuattro=%v, dataLen=%d", isQuattro, len(data))
 
@@ -596,16 +642,14 @@ func loadTRUEImage(section *ImageSection, data []byte) error {
 func (section *ImageSection) DecodeImage() error {
 	// 对于 Quattro 文件，使用 Type 字段判断格式
 	formatID := section.Format
-	if section.Type == 0x00000023 || section.Type == 0x0000001E {
+	if isQuattroFormat(section.Type) || isTRUEFormatType(section.Type) {
 		formatID = section.Type
 	}
 
-	switch formatID {
-	case ImageRAWHuffmanX530, ImageRAWHuffman10bit:
+	switch {
+	case formatID == ImageRAWHuffmanX530 || formatID == ImageRAWHuffman10bit:
 		return section.decodeHuffmanImage()
-	case ImageRAWTRUE, ImageRAWMerrill, ImageRAWQuattro:
-		return section.decodeTRUEImage()
-	case 0x00000023, 0x0000001E: // Quattro/TRUE 的简化格式标识
+	case isTRUEFormat(formatID):
 		return section.decodeTRUEImage()
 	default:
 		return fmt.Errorf("不支持的图像格式: Type=0x%08x Format=0x%08x", section.Type, section.Format)
@@ -640,7 +684,7 @@ func (section *ImageSection) decodeHuffmanImage() error {
 // 解码 TRUE 引擎图像
 func (section *ImageSection) decodeTRUEImage() error {
 	// 检查是否是 Quattro 格式
-	isQuattro := (section.Type&0xFF == FormatTypeQuattro || section.Format&0xFF == FormatTypeQuattro)
+	isQuattro := isQuattroFormat(section.Type) || isQuattroFormat(section.Format)
 	isQuattroLayout := isQuattro && section.QuattroLayout == 1
 
 	debug("decodeTRUEImage: size=%dx%d, isQuattro=%v, layout=%d",
@@ -689,7 +733,7 @@ func (section *ImageSection) decodeTRUEImage() error {
 
 	// 解码三个颜色平面
 	dataOffset := 0
-	var bottomLayerData, middleLayerData, topLayerData []uint16
+	var topLayerData []uint16
 	var topLayerRows, topLayerCols int
 
 	for color := 0; color < 3; color++ {
@@ -697,12 +741,9 @@ func (section *ImageSection) decodeTRUEImage() error {
 		planeData := section.Data[dataOffset : dataOffset+planeSize]
 
 		var planeRows, planeCols int
-		if isQuattroLayout && color == 2 {
-			// Quattro top layer: 使用 plane[2] 的全分辨率尺寸
-			planeRows = int(section.QuattroPlanes[2].Rows)
-			planeCols = int(section.QuattroPlanes[2].Columns)
-		} else if isQuattroLayout {
-			// Quattro bottom/middle layers: 使用 plane[0/1] 的尺寸
+		if isQuattro {
+			// Quattro/SDQ: 每个 plane 使用自己的尺寸。
+			// binned Quattro 的 plane 2 可能比输出图像更宽，写入时会丢弃右侧附加数据。
 			planeRows = int(section.QuattroPlanes[color].Rows)
 			planeCols = int(section.QuattroPlanes[color].Columns)
 		} else {
@@ -719,23 +760,13 @@ func (section *ImageSection) decodeTRUEImage() error {
 			uint32(section.TRUESeeds[color]),
 		)
 
-		if isQuattroLayout && color < 2 {
-			// Quattro bottom/middle layers: 直接交错存储（不上采样）
-			if color == 0 {
-				bottomLayerData = colorData
-			} else {
-				middleLayerData = colorData
-			}
-		} else if isQuattroLayout && color == 2 {
+		if isQuattroLayout && color == 2 {
 			// Quattro top layer: 单独保存，不存储到 DecodedData
 			topLayerData = colorData
 			topLayerRows = planeRows
 			topLayerCols = planeCols
 		} else {
-			// 标准格式（Merrill/Classic）：直接交错存储
-			for i := 0; i < len(colorData); i++ {
-				section.DecodedData[i*3+color] = colorData[i]
-			}
+			storeTRUEPlaneData(section.DecodedData, colorData, planeRows, planeCols, mainRows, mainCols, color)
 		}
 
 		// 平面数据按 16 字节对齐（与 C 代码一致）
@@ -743,16 +774,7 @@ func (section *ImageSection) decodeTRUEImage() error {
 		dataOffset += alignedSize
 	}
 
-	// Quattro: 交错存储 bottom/middle layers（低分辨率），与 C 版本一致
-	if isQuattroLayout && bottomLayerData != nil && middleLayerData != nil {
-		debug("  Storing Quattro bottom/middle layers (low-res, no upsampling)")
-		for i := 0; i < len(bottomLayerData); i++ {
-			section.DecodedData[i*3+0] = bottomLayerData[i]
-			section.DecodedData[i*3+1] = middleLayerData[i]
-			// top 层数据暂时不存储到 DecodedData（保持与 C 版本 x3rgb16 一致）
-			section.DecodedData[i*3+2] = 0
-		}
-
+	if isQuattroLayout && topLayerData != nil {
 		// 保存 top 层数据供后续处理使用
 		section.QuattroTopData = topLayerData
 		section.QuattroTopRows = topLayerRows

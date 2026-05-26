@@ -144,10 +144,6 @@ func dumpCAMFMetadataWithLimit(f *os.File, x3fFile *x3f.File, maxElements int) {
 	}
 }
 
-func dumpCAMFMatrix(f *os.File, entry *x3f.CAMFEntry) {
-	dumpCAMFMatrixWithLimit(f, entry, 100)
-}
-
 func dumpCAMFMatrixWithLimit(f *os.File, entry *x3f.CAMFEntry, maxElements int) {
 	fmt.Fprintf(f, "BEGIN: CAMF matrix meta data (%s)\n", entry.Name)
 
@@ -235,10 +231,6 @@ func dumpCAMFMatrixWithLimit(f *os.File, entry *x3f.CAMFEntry, maxElements int) 
 	fmt.Fprintf(f, "END: CAMF matrix meta data\n\n")
 }
 
-func printMatrixFloat(f *os.File, data []float64, dims []x3f.CAMFDimEntry, blocksize uint32) {
-	printMatrixFloatWithLimit(f, data, dims, blocksize, 100)
-}
-
 func printMatrixFloatWithLimit(f *os.File, data []float64, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {
 	if len(data) == 0 {
 		return
@@ -264,10 +256,6 @@ func printMatrixFloatWithLimit(f *os.File, data []float64, dims []x3f.CAMFDimEnt
 	}
 }
 
-func printMatrixUint(f *os.File, data []uint32, dims []x3f.CAMFDimEntry, blocksize uint32) {
-	printMatrixUintWithLimit(f, data, dims, blocksize, 100)
-}
-
 func printMatrixUintWithLimit(f *os.File, data []uint32, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {
 	if len(data) == 0 {
 		return
@@ -291,10 +279,6 @@ func printMatrixUintWithLimit(f *os.File, data []uint32, dims []x3f.CAMFDimEntry
 			fmt.Fprintf(f, "\n")
 		}
 	}
-}
-
-func printMatrixInt(f *os.File, data []int32, dims []x3f.CAMFDimEntry, blocksize uint32) {
-	printMatrixIntWithLimit(f, data, dims, blocksize, 100)
 }
 
 func printMatrixIntWithLimit(f *os.File, data []int32, dims []x3f.CAMFDimEntry, blocksize uint32, maxPrintedElements int) {

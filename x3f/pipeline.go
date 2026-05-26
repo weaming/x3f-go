@@ -16,9 +16,13 @@ type ProcessedImage struct {
 func (img *ProcessedImage) ToUint16() []uint16 {
 	result := make([]uint16, len(img.Data))
 	for i, v := range img.Data {
-		result[i] = uint16(v*65535 + 0.5)
-		if result[i] > 65535 {
+		scaledValue := v*65535 + 0.5
+		if scaledValue < 0 {
+			result[i] = 0
+		} else if scaledValue > 65535 {
 			result[i] = 65535
+		} else {
+			result[i] = uint16(scaledValue)
 		}
 	}
 	return result
@@ -28,9 +32,13 @@ func (img *ProcessedImage) ToUint16() []uint16 {
 func (img *ProcessedImage) ToUint8() []uint8 {
 	result := make([]uint8, len(img.Data))
 	for i, v := range img.Data {
-		result[i] = uint8(v*255 + 0.5)
-		if result[i] > 255 {
+		scaledValue := v*255 + 0.5
+		if scaledValue < 0 {
+			result[i] = 0
+		} else if scaledValue > 255 {
 			result[i] = 255
+		} else {
+			result[i] = uint8(scaledValue)
 		}
 	}
 	return result

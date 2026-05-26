@@ -75,7 +75,7 @@ func PreProcessImage(file *File, rawSection *ImageSection, profile PreProcessOpt
 	logger.Done(preprocessInfo)
 
 	// 3.2 应用降噪（标准模式：非 Quattro）
-	isQuattro := rawSection.QuattroTopData != nil && len(rawSection.QuattroTopData) > 0
+	isQuattro := len(rawSection.QuattroTopData) > 0
 	if profile.Denoise && !isQuattro {
 		logger.Step("🔇 应用降噪")
 		denoiseType := DetectDenoiseType(file)

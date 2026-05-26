@@ -153,9 +153,7 @@ func updateStripOffsets(subIFD *IFDWriter, strips stripInfo) {
 	for _, entry := range subIFD.entries {
 		if entry.tag == TagStripOffsets {
 			entry.data = make([]uint32, len(stripOffsets))
-			for i, offset := range stripOffsets {
-				entry.data[i] = offset
-			}
+			copy(entry.data, stripOffsets)
 			break
 		}
 	}

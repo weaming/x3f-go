@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"unsafe"
 
@@ -423,7 +424,10 @@ type imageDimensions struct {
 
 // 导出未经色彩处理的线性 RAW DNG
 func ExportRawDNG(c *FinalData, x3fFile *x3f.File, filename string, cameraInfo x3f.CameraInfo, logger *x3f.Logger) error {
-	file := createDNGFile(filename)
+	file, err := createDNGFile(filename)
+	if err != nil {
+		return err
+	}
 	defer file.Close()
 
 	wb := cameraInfo.WhiteBalance
@@ -511,12 +515,20 @@ func writeTIFFHeader(file *os.File) {
 }
 
 // 创建 DNG 输出文件
-func createDNGFile(filename string) *os.File {
+func createDNGFile(filename string) (*os.File, error) {
+	outputDir := filepath.Dir(filename)
+	if outputDir != "." {
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return nil, fmt.Errorf("创建 DNG 输出目录失败: %w", err)
+		}
+	}
+
 	file, err := os.Create(filename)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("创建 DNG 文件失败: %w", err)
 	}
-	return file
+
+	return file, nil
 }
 
 // 计算图像尺寸和裁剪参数

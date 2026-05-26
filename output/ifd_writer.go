@@ -292,10 +292,6 @@ func (w *IFDWriter) Write() (int64, error) {
 		binary.LittleEndian.PutUint16(buf[2:4], entry.typ)
 
 		count := entry.count
-		if entry.typ == TypeRational || entry.typ == TypeSRational {
-			// RATIONAL 类型: count 表示有理数个数,但 data 是 2*count 个 uint32
-			// 这里 count 已经是正确的有理数个数
-		}
 		binary.LittleEndian.PutUint32(buf[4:8], count)
 
 		// 计算数据长度

@@ -293,7 +293,7 @@ func PreprocessData(file *File, section *ImageSection, wb string) (string, error
 	}
 
 	// 检测是否是 Quattro 格式
-	isQuattro := section.QuattroTopData != nil && len(section.QuattroTopData) > 0
+	isQuattro := len(section.QuattroTopData) > 0
 	colorsToProcess := 3
 	if isQuattro {
 		colorsToProcess = 2 // 对 Quattro 只处理前两个通道 (B, M)
@@ -364,7 +364,7 @@ func PreprocessData(file *File, section *ImageSection, wb string) (string, error
 // 包括：1. 全分辨率 top 层预处理（用于 expand）
 //  2. 降采样后放到 DecodedData 的第 2 通道（用于正常的 BMT 处理）
 func PreprocessQuattroTop(file *File, section *ImageSection, wb string) error {
-	if section.QuattroTopData == nil || len(section.QuattroTopData) == 0 {
+	if len(section.QuattroTopData) == 0 {
 		return nil
 	}
 
