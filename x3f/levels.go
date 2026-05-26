@@ -55,8 +55,6 @@ type BlackLevelInfo struct {
 
 // 计算黑电平及其标准差
 func CalculateBlackLevel(file *File, section *ImageSection) (BlackLevelInfo, error) {
-	var result BlackLevelInfo
-
 	decodedWidth := section.Columns
 	decodedHeight := section.Rows
 	if section.DecodedColumns > 0 {
@@ -66,24 +64,63 @@ func CalculateBlackLevel(file *File, section *ImageSection) (BlackLevelInfo, err
 		decodedHeight = section.DecodedRows
 	}
 
-	// 使用所有可用区域计算黑电平（和 C 版本一致）
-	var areas []struct {
-		x0, y0, x1, y1 uint32
-		name           string
+	mainColors := 3
+	if len(section.QuattroTopData) > 0 {
+		mainColors = 2
 	}
 
-	// 1. 尝试 DarkShieldTop
-	if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldTop", decodedWidth, decodedHeight, true); ok {
+	result, ok := calculateBlackLevelForData(file, section.DecodedData,
+		decodedWidth, decodedHeight, 3, decodedWidth*3, true, mainColors)
+	if !ok {
+		return result, nil
+	}
+
+	if len(section.QuattroTopData) > 0 {
+		topResult, topOk := calculateBlackLevelForData(file, section.QuattroTopData,
+			uint32(section.QuattroTopCols), uint32(section.QuattroTopRows), 1, uint32(section.QuattroTopCols), false, 1)
+		if !topOk {
+			return result, fmt.Errorf("无法计算 Quattro top 黑电平")
+		}
+		result.Level[2] = topResult.Level[0]
+		result.Dev[2] = topResult.Dev[0]
+	}
+
+	debug("CalculateBlackLevel: level=(%.2f, %.2f, %.2f), dev=(%.2f, %.2f, %.2f)",
+		result.Level[0], result.Level[1], result.Level[2],
+		result.Dev[0], result.Dev[1], result.Dev[2])
+
+	return result, nil
+}
+
+type blackLevelArea struct {
+	x0   uint32
+	y0   uint32
+	x1   uint32
+	y1   uint32
+	name string
+}
+
+func calculateBlackLevelForData(
+	file *File,
+	data []uint16,
+	width, height, channels, rowStride uint32,
+	rescale bool,
+	colors int,
+) (BlackLevelInfo, bool) {
+	var result BlackLevelInfo
+	var areas []blackLevelArea
+
+	if len(data) == 0 || width == 0 || height == 0 || channels == 0 || rowStride == 0 || colors <= 0 {
+		return result, false
+	}
+
+	if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldTop", width, height, rescale); ok {
 		debug("Calculate black level for DarkShieldTop: [%d,%d,%d,%d]", x0, y0, x1, y1)
-		areas = append(areas, struct {
-			x0, y0, x1, y1 uint32
-			name           string
-		}{x0, y0, x1, y1, "DarkShieldTop"})
+		areas = append(areas, blackLevelArea{x0: x0, y0: y0, x1: x1, y1: y1, name: "DarkShieldTop"})
 	} else {
 		debug("Do not calculate black level for DarkShieldTop")
 	}
 
-	// 2. DarkShieldBottom - 某些相机有问题，需要检查相机型号
 	useDarkShieldBottom := true
 	if model, ok := file.GetProperty("CAMMODEL"); ok && model == "SIGMA DP2" {
 		useDarkShieldBottom = false
@@ -94,103 +131,117 @@ func CalculateBlackLevel(file *File, section *ImageSection) (BlackLevelInfo, err
 		debug("Skip DarkShieldBottom for sd Quattro H")
 	}
 	if useDarkShieldBottom {
-		if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldBottom", decodedWidth, decodedHeight, true); ok {
+		if x0, y0, x1, y1, ok := file.GetCAMFRectScaled("DarkShieldBottom", width, height, rescale); ok {
 			debug("Calculate black level for DarkShieldBottom: [%d,%d,%d,%d]", x0, y0, x1, y1)
-			areas = append(areas, struct {
-				x0, y0, x1, y1 uint32
-				name           string
-			}{x0, y0, x1, y1, "DarkShieldBottom"})
+			areas = append(areas, blackLevelArea{x0: x0, y0: y0, x1: x1, y1: y1, name: "DarkShieldBottom"})
 		} else {
 			debug("Do not calculate black level for DarkShieldBottom (not found)")
 		}
 	}
 
-	// 3. 左右边缘列
-	// 尝试从 CAMF 获取 DarkShieldColRange
 	if colRange, ok := file.GetCAMFMatrixUint32("DarkShieldColRange", 2, 2); ok {
-		leftX0 := uint32(colRange[0])
-		leftX1 := uint32(colRange[1])
-		rightX0 := uint32(colRange[2])
-		rightX1 := uint32(colRange[3])
-
-		// 获取 KeepImageArea 进行缩放
-		if keepX0, _, keepX1, _, keepOk := file.GetCAMFRect("KeepImageArea"); keepOk {
-			keepCols := keepX1 - keepX0 + 1
-
-			// 缩放到实际图像尺寸
-			leftX0 = leftX0 * decodedWidth / keepCols
-			leftX1 = leftX1 * decodedWidth / keepCols
-			rightX0 = rightX0 * decodedWidth / keepCols
-			rightX1 = rightX1 * decodedWidth / keepCols
-
-			debug("Calculate black level for Left: [%d,0,%d,%d]", leftX0, leftX1, decodedHeight-1)
-			areas = append(areas, struct {
-				x0, y0, x1, y1 uint32
-				name           string
-			}{leftX0, 0, leftX1, decodedHeight - 1, "Left"})
-
-			debug("Calculate black level for Right: [%d,0,%d,%d]", rightX0, rightX1, decodedHeight-1)
-			areas = append(areas, struct {
-				x0, y0, x1, y1 uint32
-				name           string
-			}{rightX0, 0, rightX1, decodedHeight - 1, "Right"})
+		if x0, y0, x1, y1, ok := transformCAMFRectToImage(file, colRange[0], 0, colRange[1], ^uint32(0), width, height, rescale); ok {
+			debug("Calculate black level for Left: [%d,%d,%d,%d]", x0, y0, x1, y1)
+			areas = append(areas, blackLevelArea{x0: x0, y0: y0, x1: x1, y1: y1, name: "Left"})
+		}
+		if x0, y0, x1, y1, ok := transformCAMFRectToImage(file, colRange[2], 0, colRange[3], ^uint32(0), width, height, rescale); ok {
+			debug("Calculate black level for Right: [%d,%d,%d,%d]", x0, y0, x1, y1)
+			areas = append(areas, blackLevelArea{x0: x0, y0: y0, x1: x1, y1: y1, name: "Right"})
 		}
 	}
 
 	if len(areas) == 0 {
-		// 无法计算黑电平，返回零值
-		return result, nil
+		return result, false
 	}
 
-	// 第一遍：计算均值
 	var sum [3]uint64
 	var count uint64
 
 	for _, area := range areas {
-		for y := area.y0; y <= area.y1 && y < decodedHeight; y++ {
-			for x := area.x0; x <= area.x1 && x < decodedWidth; x++ {
-				idx := int(y)*int(decodedWidth) + int(x)
-				sum[0] += uint64(section.DecodedData[idx*3])
-				sum[1] += uint64(section.DecodedData[idx*3+1])
-				sum[2] += uint64(section.DecodedData[idx*3+2])
+		for y := area.y0; y <= area.y1 && y < height; y++ {
+			for x := area.x0; x <= area.x1 && x < width; x++ {
+				baseIdx := int(y)*int(rowStride) + int(x)*int(channels)
+				for color := 0; color < colors; color++ {
+					sum[color] += uint64(data[baseIdx+color])
+				}
 				count++
 			}
 		}
 	}
 
 	if count == 0 {
-		return result, nil
+		return result, false
 	}
 
-	for i := 0; i < 3; i++ {
-		result.Level[i] = float64(sum[i]) / float64(count)
+	for color := 0; color < colors; color++ {
+		result.Level[color] = float64(sum[color]) / float64(count)
 	}
 
-	// 第二遍：计算标准差
 	var sqdevSum Vector3
 
 	for _, area := range areas {
-		for y := area.y0; y <= area.y1 && y < decodedHeight; y++ {
-			for x := area.x0; x <= area.x1 && x < decodedWidth; x++ {
-				idx := int(y)*int(decodedWidth) + int(x)
-				for c := 0; c < 3; c++ {
-					val := float64(section.DecodedData[idx*3+c])
-					diff := val - result.Level[c]
-					sqdevSum[c] += diff * diff
+		for y := area.y0; y <= area.y1 && y < height; y++ {
+			for x := area.x0; x <= area.x1 && x < width; x++ {
+				baseIdx := int(y)*int(rowStride) + int(x)*int(channels)
+				for color := 0; color < colors; color++ {
+					value := float64(data[baseIdx+color])
+					diff := value - result.Level[color]
+					sqdevSum[color] += diff * diff
 				}
 			}
 		}
 	}
 
-	for i := 0; i < 3; i++ {
-		result.Dev[i] = math.Sqrt(sqdevSum[i] / float64(count))
+	for color := 0; color < colors; color++ {
+		result.Dev[color] = math.Sqrt(sqdevSum[color] / float64(count))
 	}
 
-	debug("CalculateBlackLevel: level=(%.2f, %.2f, %.2f), dev=(%.2f, %.2f, %.2f)",
-		result.Level[0], result.Level[1], result.Level[2],
-		result.Dev[0], result.Dev[1], result.Dev[2])
+	return result, true
+}
 
-	return result, nil
+func transformCAMFRectToImage(
+	file *File,
+	rectX0, rectY0, rectX1, rectY1 uint32,
+	imageWidth, imageHeight uint32,
+	rescale bool,
+) (x0, y0, x1, y1 uint32, ok bool) {
+	keepX0, keepY0, keepX1, keepY1, keepOk := file.GetCAMFRect("KeepImageArea")
+	if !keepOk {
+		return 0, 0, 0, 0, false
+	}
+
+	if rectX0 > keepX1 || rectY0 > keepY1 || rectX1 < keepX0 || rectY1 < keepY0 {
+		return 0, 0, 0, 0, false
+	}
+
+	if rectX0 < keepX0 {
+		rectX0 = keepX0
+	}
+	if rectY0 < keepY0 {
+		rectY0 = keepY0
+	}
+	if rectX1 > keepX1 {
+		rectX1 = keepX1
+	}
+	if rectY1 > keepY1 {
+		rectY1 = keepY1
+	}
+
+	x0 = rectX0 - keepX0
+	y0 = rectY0 - keepY0
+	x1 = rectX1 - keepX0
+	y1 = rectY1 - keepY0
+
+	if rescale {
+		keepCols := keepX1 - keepX0 + 1
+		keepRows := keepY1 - keepY0 + 1
+		x0 = x0 * imageWidth / keepCols
+		y0 = y0 * imageHeight / keepRows
+		x1 = x1 * imageWidth / keepCols
+		y1 = y1 * imageHeight / keepRows
+	}
+
+	return x0, y0, x1, y1, true
 }
 
 // 计算 intermediate 表示的最大值
@@ -363,43 +414,24 @@ func PreprocessData(file *File, section *ImageSection, wb string) (string, error
 // PreprocessQuattroTop 对 Quattro top 层数据进行预处理
 // 包括：1. 全分辨率 top 层预处理（用于 expand）
 //  2. 降采样后放到 DecodedData 的第 2 通道（用于正常的 BMT 处理）
-func PreprocessQuattroTop(file *File, section *ImageSection, wb string) error {
+func PreprocessQuattroTop(
+	file *File,
+	section *ImageSection,
+	blackLevelInfo BlackLevelInfo,
+	intermediateBias float64,
+	maxIntermediate [3]uint32,
+) error {
 	if len(section.QuattroTopData) == 0 {
 		return nil
 	}
 
 	debug("PreprocessQuattroTop: starting top layer preprocessing and downsampling")
 
-	// 1. 计算 bottom/middle 层的黑电平（用于 intermediateBias 计算）
-	blackLevelInfo, err := CalculateBlackLevel(file, section)
-	if err != nil {
-		debug("PreprocessQuattroTop: CalculateBlackLevel failed: %v", err)
-		return err
-	}
-
-	// 2. 对 Quattro，C 版本的黑电平约 2046-2049
-	// 从 C 版本的调试输出可知：black_level = {2046.87, 2046.24, 2049.04}
-	// 但我的 CalculateBlackLevel 返回的是预处理后的值（约 58）
-	// TODO: 研究如何正确获取原始黑电平
-	// 临时使用 C 版本的值作为常量
-	topBlackLevel := 2046.0
-
-	// 3. 使用 bottom/middle 层的黑电平计算 intermediateBias
-	intermediateBias, ok := GetIntermediateBias(file, wb, blackLevelInfo)
-	if !ok {
-		debug("PreprocessQuattroTop: GetIntermediateBias failed, using 0")
-		intermediateBias = 0
-	}
+	topBlackLevel := blackLevelInfo.Level[2]
 
 	maxRaw, ok := file.GetMaxRAW()
 	if !ok {
 		maxRaw = [3]uint32{4095, 4095, 4095}
-	}
-
-	maxIntermediate, ok := GetMaxIntermediate(file, wb, intermediateBias)
-	if !ok {
-		debug("PreprocessQuattroTop: GetMaxIntermediate failed, skipping preprocessing")
-		return nil
 	}
 
 	// 使用第 2 通道（T 通道）的参数

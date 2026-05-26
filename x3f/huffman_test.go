@@ -55,6 +55,55 @@ func TestStoreTRUEPlaneDataDiscardsExtraRightColumns(t *testing.T) {
 	}
 }
 
+func TestLoadHuffmanImageUsesSimpleDecodeWhenRowStrideIsSet(t *testing.T) {
+	section := &ImageSection{
+		Format:    ImageRAWHuffman10bit,
+		Columns:   1,
+		Rows:      1,
+		RowStride: 4,
+	}
+
+	var data bytes.Buffer
+	for value := 0; value < 1024; value++ {
+		writeUint16(t, &data, uint16(value))
+	}
+	packed := uint32(1) | uint32(2)<<10 | uint32(3)<<20
+	writeUint32(t, &data, packed)
+
+	if err := loadHuffmanImage(section, data.Bytes()); err != nil {
+		t.Fatalf("loadHuffmanImage failed: %v", err)
+	}
+	if section.HuffmanCompressed {
+		t.Fatalf("expected simple Huffman decode")
+	}
+	if err := section.DecodeImage(); err != nil {
+		t.Fatalf("DecodeImage failed: %v", err)
+	}
+
+	want := []uint16{1, 2, 3}
+	for i := range want {
+		if section.DecodedData[i] != want[i] {
+			t.Fatalf("DecodedData[%d] = %d, want %d", i, section.DecodedData[i], want[i])
+		}
+	}
+}
+
+func TestHuffmanDecodeRowTracksNegativeMinimumForLegacyOffset(t *testing.T) {
+	tree := NewHuffmanTree(1)
+	tree.Nodes[0].Leaf = 0xfffffffb
+
+	minimum := int16(0)
+	rowData := HuffmanDecodeRow(nil, 0, 1, tree, 0, &minimum)
+	if minimum != -5 {
+		t.Fatalf("minimum = %d, want -5", minimum)
+	}
+	for _, value := range rowData {
+		if value != 0 {
+			t.Fatalf("negative decoded value should clamp to 0, got %d", value)
+		}
+	}
+}
+
 func TestLoadImageSectionLoadsSDQAsQuattroTRUE(t *testing.T) {
 	sectionData := buildMinimalTRUESection(t, ImageRAWSDQ)
 	file := &File{

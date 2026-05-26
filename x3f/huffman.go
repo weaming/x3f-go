@@ -209,7 +209,7 @@ func GetTRUEDiff(bs *BitState, tree *HuffmanTree) int32 {
 }
 
 // 解码一行 Huffman 数据
-func HuffmanDecodeRow(data []byte, rowOffset uint32, columns int, tree *HuffmanTree, offset int16) []uint16 {
+func HuffmanDecodeRow(data []byte, rowOffset uint32, columns int, tree *HuffmanTree, offset int16, minimum *int16) []uint16 {
 	result := make([]uint16, columns*3)
 
 	c := [3]int16{offset, offset, offset}
@@ -225,6 +225,9 @@ func HuffmanDecodeRow(data []byte, rowOffset uint32, columns int, tree *HuffmanT
 			var cFix uint16
 			if c[color] < 0 {
 				cFix = 0
+				if minimum != nil && c[color] < *minimum {
+					*minimum = c[color]
+				}
 			} else {
 				cFix = uint16(c[color])
 			}
@@ -326,9 +329,12 @@ type ImageSection struct {
 	DecodedRows    uint32
 
 	// Huffman 数据
-	HuffmanTree *HuffmanTree
-	RowOffsets  []uint32
-	Data        []byte
+	HuffmanTree       *HuffmanTree
+	RowOffsets        []uint32
+	Data              []byte
+	HuffmanMapping    []uint16
+	HuffmanBits       int
+	HuffmanCompressed bool
 
 	// TRUE 引擎数据
 	TRUETable      []TRUEHuffmanElement
@@ -463,35 +469,54 @@ func (f *File) LoadImageSection(entry *DirectoryEntry) error {
 // 加载传统 Huffman 图像
 func loadHuffmanImage(section *ImageSection, data []byte) error {
 	offset := 0
+	bits := 10
+	tableSize := 1 << bits
 
-	// 读取 Huffman 表大小
-	tableSize := binary.LittleEndian.Uint32(data[offset : offset+4])
-	offset += 4
+	section.HuffmanBits = bits
 
-	// 读取 Huffman 表
+	if len(data) < tableSize*2 {
+		return fmt.Errorf("Huffman 数据太短，无法读取映射表")
+	}
+
+	section.HuffmanMapping = make([]uint16, tableSize)
+	for i := 0; i < tableSize; i++ {
+		section.HuffmanMapping[i] = binary.LittleEndian.Uint16(data[offset : offset+2])
+		offset += 2
+	}
+
+	if section.RowStride != 0 {
+		section.HuffmanCompressed = false
+		section.Data = data[offset:]
+		return nil
+	}
+
+	section.HuffmanCompressed = true
+	if len(data) < offset+tableSize*4+int(section.Rows)*4 {
+		return fmt.Errorf("Huffman 数据太短，无法读取压缩表")
+	}
+
 	table := make([]uint32, tableSize)
-	for i := uint32(0); i < tableSize; i++ {
+	for i := 0; i < tableSize; i++ {
 		table[i] = binary.LittleEndian.Uint32(data[offset : offset+4])
 		offset += 4
 	}
 
-	// 读取映射表（如果存在）
-	var mapping []uint16
-
-	// 读取行偏移表
-	numRows := section.Rows
-	section.RowOffsets = make([]uint32, numRows)
-	for i := uint32(0); i < numRows; i++ {
-		section.RowOffsets[i] = binary.LittleEndian.Uint32(data[offset : offset+4])
-		offset += 4
+	rowOffsetsSize := int(section.Rows) * 4
+	encodedDataEnd := len(data) - rowOffsetsSize
+	if encodedDataEnd < offset {
+		return fmt.Errorf("Huffman 行偏移表位置无效")
 	}
 
-	// 构建 Huffman 树
-	section.HuffmanTree = NewHuffmanTree(16)
-	PopulateHuffmanTree(section.HuffmanTree, table, mapping)
+	section.Data = data[offset:encodedDataEnd]
 
-	// 保存压缩数据
-	section.Data = data[offset:]
+	section.RowOffsets = make([]uint32, section.Rows)
+	for i := uint32(0); i < section.Rows; i++ {
+		tableOffset := encodedDataEnd + int(i)*4
+		section.RowOffsets[i] = binary.LittleEndian.Uint32(data[tableOffset : tableOffset+4])
+	}
+
+	section.HuffmanTree = NewHuffmanTree(bits)
+	PopulateHuffmanTree(section.HuffmanTree, table, section.HuffmanMapping)
 
 	return nil
 }
@@ -665,20 +690,75 @@ func (section *ImageSection) decodeHuffmanImage() error {
 	section.DecodedColumns = section.Columns
 	section.DecodedRows = section.Rows
 
-	for row := uint32(0); row < section.Rows; row++ {
-		rowData := HuffmanDecodeRow(
-			section.Data,
-			section.RowOffsets[row],
-			int(section.Columns),
-			section.HuffmanTree,
-			0,
-		)
+	if section.HuffmanCompressed {
+		return section.decodeCompressedHuffmanImage()
+	}
 
-		// 复制到结果
-		copy(section.DecodedData[row*section.Columns*3:], rowData)
+	return section.decodeSimpleHuffmanImage()
+}
+
+func (section *ImageSection) decodeCompressedHuffmanImage() error {
+	minimum := int16(0)
+	offset := int16(0)
+	section.decodeCompressedHuffmanRows(offset, &minimum)
+
+	if minimum < 0 {
+		offset = -minimum
+		minimum = 0
+		section.decodeCompressedHuffmanRows(offset, &minimum)
 	}
 
 	return nil
+}
+
+func (section *ImageSection) decodeCompressedHuffmanRows(offset int16, minimum *int16) {
+	for row := uint32(0); row < section.Rows; row++ {
+		rowData := HuffmanDecodeRow(section.Data, section.RowOffsets[row], int(section.Columns), section.HuffmanTree, offset, minimum)
+		copy(section.DecodedData[row*section.Columns*3:], rowData)
+	}
+}
+
+func (section *ImageSection) decodeSimpleHuffmanImage() error {
+	rowStride := int(section.RowStride)
+	if rowStride == 0 {
+		return fmt.Errorf("Huffman simple decode 缺少 row stride")
+	}
+
+	for row := uint32(0); row < section.Rows; row++ {
+		rowStart := int(row) * rowStride
+		if rowStart+int(section.Columns)*4 > len(section.Data) {
+			return fmt.Errorf("Huffman simple decode 数据越界: row=%d", row)
+		}
+
+		acc := [3]uint16{}
+		for col := uint32(0); col < section.Columns; col++ {
+			packed := binary.LittleEndian.Uint32(section.Data[rowStart+int(col)*4:])
+			for color := 0; color < 3; color++ {
+				index := uint16((packed >> (uint(color) * uint(section.HuffmanBits))) & ((1 << section.HuffmanBits) - 1))
+				acc[color] += uint16(section.simpleHuffmanDiff(index))
+
+				value := acc[color]
+				if int16(value) < 0 {
+					value = 0
+				}
+
+				dstIdx := int(row)*int(section.Columns)*3 + int(col)*3 + color
+				section.DecodedData[dstIdx] = value
+			}
+		}
+	}
+
+	return nil
+}
+
+func (section *ImageSection) simpleHuffmanDiff(index uint16) int32 {
+	if len(section.HuffmanMapping) == 0 {
+		return int32(index)
+	}
+	if int(index) >= len(section.HuffmanMapping) {
+		return 0
+	}
+	return int32(section.HuffmanMapping[index])
 }
 
 // 解码 TRUE 引擎图像

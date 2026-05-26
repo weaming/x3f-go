@@ -348,7 +348,7 @@ func buildOpcodeList2(spatialGains []x3f.SpatialGainCorr, activeArea []uint32, i
 	offset += 4
 
 	// 写入每个 GainMap opcode
-	for planeIdx, sg := range spatialGains {
+	for _, sg := range spatialGains {
 		opcodeParamSize := uint32(76 + len(sg.Gain)*4) // 参数大小（不包括 opcode header）
 
 		// Opcode header
@@ -365,10 +365,10 @@ func buildOpcodeList2(spatialGains []x3f.SpatialGainCorr, activeArea []uint32, i
 		binary.BigEndian.PutUint32(buf[offset+12:], activeArea[3]-activeArea[1]) // Right (active width)
 		offset += 16
 
-		binary.BigEndian.PutUint32(buf[offset:], uint32(planeIdx))      // Plane (0=R, 1=G, 2=B)
+		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.Chan))       // Plane (0=R, 1=G, 2=B)
 		binary.BigEndian.PutUint32(buf[offset+4:], uint32(sg.Channels)) // Planes
-		binary.BigEndian.PutUint32(buf[offset+8:], 1)                   // RowPitch = 1
-		binary.BigEndian.PutUint32(buf[offset+12:], 1)                  // ColPitch = 1
+		binary.BigEndian.PutUint32(buf[offset+8:], uint32(sg.RowPitch)) // RowPitch
+		binary.BigEndian.PutUint32(buf[offset+12:], uint32(sg.ColPitch))
 		offset += 16
 
 		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.Rows))   // MapPointsV
@@ -436,7 +436,8 @@ func ExportRawDNG(c *FinalData, x3fFile *x3f.File, filename string, cameraInfo x
 	}
 
 	imageLevels := stdLevels
-	opcodeData := prepareSpatialGain(x3fFile, wb, c.Dims)
+	spatialGainApplied := x3fFile.ShouldApplySpatialGain()
+	opcodeData := prepareSpatialGain(x3fFile, wb, c.Dims, spatialGainApplied)
 	previewData, previewW, previewH := generatePreviewImage(c.ImgData, c.Dims.targetWidth, c.Dims.targetHeight, 300)
 
 	writeTIFFHeader(file)
@@ -475,9 +476,15 @@ func applyIntermediateToSRGB(imageData []byte, dims imageDimensions, x3fFile *x3
 	// 5. 对每个像素应用转换
 	maxOut := 65535.0
 	pixelCount := dims.targetWidth * dims.targetHeight
+	var spatialGains []x3f.SpatialGainCorr
+	if x3fFile.ShouldApplySpatialGain() {
+		spatialGains = x3fFile.GetSpatialGain(wb)
+	}
 
 	for i := uint32(0); i < pixelCount; i++ {
 		offset := i * 6 // 16-bit RGB, 3 channels
+		row := int(i / dims.targetWidth)
+		col := int(i % dims.targetWidth)
 
 		// 读取 intermediate 值
 		r := float64(binary.LittleEndian.Uint16(imageData[offset:]))
@@ -489,6 +496,9 @@ func applyIntermediateToSRGB(imageData []byte, dims imageDimensions, x3fFile *x3
 			(r - intermediateBias) / (float64(maxIntermediate[0]) - intermediateBias),
 			(g - intermediateBias) / (float64(maxIntermediate[1]) - intermediateBias),
 			(b - intermediateBias) / (float64(maxIntermediate[2]) - intermediateBias),
+		}
+		for channel := 0; channel < 3; channel++ {
+			input[channel] *= x3f.CalcSpatialGain(spatialGains, row, col, channel, int(dims.targetHeight), int(dims.targetWidth))
 		}
 
 		// 应用组合矩阵（intermediate → sRGB，一步完成）
@@ -652,7 +662,12 @@ func preparePreprocessedImageData(preprocessedData []uint16, dims imageDimension
 }
 
 // 准备 Spatial Gain 数据
-func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions) []byte {
+func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions, spatialGainApplied bool) []byte {
+	// 当前 DNG 输出已经在像素转换阶段烘焙 spatial gain，避免再写 OpcodeList2 重复校正。
+	if spatialGainApplied || !x3fFile.ShouldApplySpatialGain() {
+		return nil
+	}
+
 	spatialGains := x3fFile.GetSpatialGain(wb)
 	if len(spatialGains) == 0 {
 		return nil

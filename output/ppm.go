@@ -183,6 +183,10 @@ func ExportPreprocessedPPM(rawSection *x3f.ImageSection, file *x3f.File, outputP
 	// 创建 sRGB gamma LUT（与C版本一致：1024个条目）
 	const LUTSIZE = 1024
 	lut := x3f.NewSRGBLUT(LUTSIZE, 65535)
+	var spatialGains []x3f.SpatialGainCorr
+	if file.ShouldApplySpatialGain() {
+		spatialGains = file.GetSpatialGain(wb)
+	}
 
 	f, err := os.Create(outputPath)
 	if err != nil {
@@ -210,6 +214,9 @@ func ExportPreprocessedPPM(rawSection *x3f.ImageSection, file *x3f.File, outputP
 				(r - ilevelsBlack[0]) / (ilevelsWhite[0] - ilevelsBlack[0]),
 				(g - ilevelsBlack[1]) / (ilevelsWhite[1] - ilevelsBlack[1]),
 				(b - ilevelsBlack[2]) / (ilevelsWhite[2] - ilevelsBlack[2]),
+			}
+			for channel := 0; channel < 3; channel++ {
+				input[channel] *= x3f.CalcSpatialGain(spatialGains, int(outY), int(outX), channel, int(targetHeight), int(targetWidth))
 			}
 
 			// 应用色彩矩阵转换 (BMT -> XYZ -> sRGB)

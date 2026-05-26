@@ -1460,6 +1460,9 @@ type SpatialGainCorr struct {
 	Channels int       // 通道数
 	RowOff   int       // 行偏移
 	ColOff   int       // 列偏移
+	RowPitch int
+	ColPitch int
+	Chan     int
 }
 
 // 获取 Spatial Gain 数据用于 DNG Opcode List 2
@@ -1488,6 +1491,9 @@ func (f *File) GetSpatialGain(wb string) []SpatialGainCorr {
 					Channels: int(dims[2]),
 					RowOff:   0,
 					ColOff:   0,
+					RowPitch: 1,
+					ColPitch: 1,
+					Chan:     0,
 				})
 				return result
 			}
@@ -1509,6 +1515,9 @@ func (f *File) GetSpatialGain(wb string) []SpatialGainCorr {
 				Channels: int(dims[2]),
 				RowOff:   0,
 				ColOff:   0,
+				RowPitch: 1,
+				ColPitch: 1,
+				Chan:     0,
 			})
 		}
 	}
@@ -1839,6 +1848,9 @@ func (f *File) getMerrillTypeSpatialGain() []SpatialGainCorr {
 			Channels: 1,
 			RowOff:   0,
 			ColOff:   0,
+			RowPitch: 1,
+			ColPitch: 1,
+			Chan:     ch,
 		})
 	}
 
@@ -1863,6 +1875,9 @@ func convertSpatialGain(data []float64, dims []uint32) *SpatialGainCorr {
 		Channels: int(dims[2]),
 		RowOff:   0,
 		ColOff:   0,
+		RowPitch: 1,
+		ColPitch: 1,
+		Chan:     0,
 	}
 }
 

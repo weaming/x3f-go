@@ -141,7 +141,7 @@ func PreProcessImage(file *File, rawSection *ImageSection, profile PreProcessOpt
 				denoiseInfo))
 
 		// 对 Quattro top 层也应用预处理
-		if err := PreprocessQuattroTop(file, rawSection, wb); err != nil {
+		if err := PreprocessQuattroTop(file, rawSection, blackLevel, intermediateBias, maxIntermediate); err != nil {
 			return nil, fmt.Errorf("top 层预处理失败: %w", err)
 		}
 
