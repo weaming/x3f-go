@@ -757,6 +757,10 @@ func (f *File) GetCAMFMatrixUint32(name string, expectedRows, expectedCols uint3
 
 // GetCameraModel 根据 CAMERAID 返回相机型号名称
 func (f *File) GetCameraModel() string {
+	if model, ok := f.GetProperty("CAMMODEL"); ok && model != "" {
+		return model
+	}
+
 	cameraID, ok := f.GetCAMFUint32("CAMERAID")
 	if !ok {
 		return "SIGMA Digital Camera"
@@ -1143,13 +1147,18 @@ func (f *File) decodeCAMFType4(encodedData []byte, fullData []byte) ([]byte, err
 
 // 解码 Type 5 CAMF 数据
 func (f *File) decodeCAMFType5(encodedData []byte, fullData []byte) ([]byte, error) {
-	// Type 5 与 Type 4 类似，但解码逻辑更简单
-	// 1. 读取 Huffman 表
+	if len(fullData) < CAMFHeaderSize {
+		return nil, fmt.Errorf("data too short for type 5 header")
+	}
+	if len(encodedData) < 32 {
+		return nil, fmt.Errorf("data too short for type 5 payload")
+	}
+
 	elements := []TRUEHuffmanElement{}
 	offset := 0
-	for offset < len(encodedData) && encodedData[offset] != 0 {
-		if offset+1 >= len(encodedData) {
-			break
+	for offset < 28 && encodedData[offset] != 0 {
+		if offset+1 >= 28 {
+			return nil, fmt.Errorf("truncated type 5 huffman table")
 		}
 		element := TRUEHuffmanElement{
 			CodeSize: encodedData[offset],
@@ -1158,23 +1167,27 @@ func (f *File) decodeCAMFType5(encodedData []byte, fullData []byte) ([]byte, err
 		elements = append(elements, element)
 		offset += 2
 	}
+	if offset >= 28 {
+		return nil, fmt.Errorf("unterminated type 5 huffman table")
+	}
 
-	// 2. 构建 Huffman 树
 	tree := NewHuffmanTree(8)
 	PopulateTRUEHuffmanTree(tree, elements)
 
-	// 3. 读取参数
 	decodedDataSize := binary.LittleEndian.Uint32(fullData[12:16])
 	decodeBias := binary.LittleEndian.Uint32(fullData[16:20])
+	decodingSize := binary.LittleEndian.Uint32(encodedData[28:32])
 
-	// 4. 从绝对偏移 32 开始是 Huffman 编码数据
 	huffmanStart := 32
-	if huffmanStart >= len(encodedData) {
-		return nil, fmt.Errorf("no huffman data")
+	huffmanEnd := huffmanStart + int(decodingSize)
+	if decodingSize == 0 {
+		return nil, fmt.Errorf("empty type 5 huffman data")
+	}
+	if huffmanEnd > len(encodedData) {
+		return nil, fmt.Errorf("type 5 huffman data truncated: need %d bytes, have %d", huffmanEnd, len(encodedData))
 	}
 
-	// 5. 解码（简单的累加模式）
-	return f.camfDecodeType5Data(encodedData[huffmanStart:], tree, decodedDataSize, int32(decodeBias))
+	return f.camfDecodeType5Data(encodedData[huffmanStart:huffmanEnd], tree, decodedDataSize, int32(decodeBias))
 }
 
 // 执行 Type 4 的实际解码
