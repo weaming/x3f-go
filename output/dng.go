@@ -15,6 +15,8 @@ import (
 
 var debug = x3f.Debug
 
+const HIGHLIGHT_KNEE_LUMINANCE = 0.75
+
 // DNG 特定标签常量 (标准 TIFF 标签在 tiff.go 中定义)
 const (
 	TagImageDescription    = 270
@@ -503,6 +505,7 @@ func applyIntermediateToSRGB(imageData []byte, dims imageDimensions, x3fFile *x3
 
 		// 应用组合矩阵（intermediate → sRGB，一步完成）
 		output := combinedMat.Apply(input)
+		output = compressLinearSRGBHighlight(output)
 
 		// 转换回 16-bit，裁剪到 [0, 65535]
 		for c := 0; c < 3; c++ {
@@ -515,6 +518,95 @@ func applyIntermediateToSRGB(imageData []byte, dims imageDimensions, x3fFile *x3
 			binary.LittleEndian.PutUint16(imageData[offset+uint32(c)*2:], uint16(val))
 		}
 	}
+}
+
+// compressLinearSRGBHighlight 将越界线性 sRGB 映射回显示色域，并保留高光亮度细节。
+func compressLinearSRGBHighlight(rgb x3f.Vector3) x3f.Vector3 {
+	if isLinearSRGBInGamut(rgb) {
+		return rgb
+	}
+
+	sourceLuminance := linearSRGBLuminance(rgb)
+	targetLuminance := compressHighlightLuminance(sourceLuminance)
+	maximumChromaScale := 1.0
+
+	for channel := 0; channel < 3; channel++ {
+		chroma := rgb[channel] - sourceLuminance
+		if chroma > 0 {
+			maximumChromaScale = minFloat64(maximumChromaScale, (1-targetLuminance)/chroma)
+		} else if chroma < 0 {
+			maximumChromaScale = minFloat64(maximumChromaScale, targetLuminance/-chroma)
+		}
+	}
+
+	if maximumChromaScale < 0 {
+		maximumChromaScale = 0
+	}
+	maximumChromaScale *= highlightChromaScale(sourceLuminance)
+
+	var compressed x3f.Vector3
+	for channel := 0; channel < 3; channel++ {
+		compressed[channel] = targetLuminance + maximumChromaScale*(rgb[channel]-sourceLuminance)
+		if compressed[channel] < 0 {
+			compressed[channel] = 0
+		} else if compressed[channel] > 1 {
+			compressed[channel] = 1
+		}
+	}
+
+	return compressed
+}
+
+func isLinearSRGBInGamut(rgb x3f.Vector3) bool {
+	for channel := 0; channel < 3; channel++ {
+		if rgb[channel] < 0 || rgb[channel] > 1 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func linearSRGBLuminance(rgb x3f.Vector3) float64 {
+	return 0.2126729*rgb[0] + 0.7151522*rgb[1] + 0.0721750*rgb[2]
+}
+
+func compressHighlightLuminance(luminance float64) float64 {
+	if luminance <= HIGHLIGHT_KNEE_LUMINANCE {
+		return maxFloat64(luminance, 0)
+	}
+
+	highlightRange := 1 - HIGHLIGHT_KNEE_LUMINANCE
+	compressed := HIGHLIGHT_KNEE_LUMINANCE + highlightRange*(1-1/(1+(luminance-HIGHLIGHT_KNEE_LUMINANCE)/highlightRange))
+	return minFloat64(compressed, 1)
+}
+
+func highlightChromaScale(luminance float64) float64 {
+	if luminance <= HIGHLIGHT_KNEE_LUMINANCE {
+		return 1
+	}
+	if luminance >= 1 {
+		return 0
+	}
+
+	remainingHeadroom := (1 - luminance) / (1 - HIGHLIGHT_KNEE_LUMINANCE)
+	return remainingHeadroom * remainingHeadroom * (3 - 2*remainingHeadroom)
+}
+
+func minFloat64(first, second float64) float64 {
+	if first < second {
+		return first
+	}
+
+	return second
+}
+
+func maxFloat64(first, second float64) float64 {
+	if first > second {
+		return first
+	}
+
+	return second
 }
 
 // 写入 TIFF/DNG 文件头
