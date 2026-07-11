@@ -23,11 +23,6 @@ type Config struct {
 	ExposureValue   float64 // 曝光补偿（EV 值）
 }
 
-var stdLevels = x3f.ImageLevels{
-	Black: x3f.Vector3{0.0, 0.0, 0.0},
-	White: [3]uint32{65535, 65535, 65535},
-}
-
 type FinalData struct {
 	ImgData []byte
 	Dims    imageDimensions

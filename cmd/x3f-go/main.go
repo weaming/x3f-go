@@ -55,7 +55,8 @@ func parseFlags() output.Config {
 		fmt.Fprintf(os.Stderr, "选项:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\n支持的输出格式:\n")
-		fmt.Fprintf(os.Stderr, "  .dng   - DNG (Digital Negative, 线性 sRGB)\n")
+		fmt.Fprintf(os.Stderr, "  .dng   - DNG (linear sRGB with highlight compression)\n")
+		fmt.Fprintf(os.Stderr, "  .exr   - OpenEXR (float32 scene-linear ACEScg)\n")
 		fmt.Fprintf(os.Stderr, "  .tiff  - TIFF (线性 sRGB)\n")
 		fmt.Fprintf(os.Stderr, "  .jpg   - JPEG (带色调映射和伽马校正)\n")
 		fmt.Fprintf(os.Stderr, "  .ppm   - P3 (PPM ASCII, 用于和 C 版本对比测试)\n")
@@ -122,6 +123,8 @@ func run(config output.Config) error {
 	switch outputExt {
 	case ".dng":
 		convertErr = convertToDNG(x3fFile, config, logger)
+	case ".exr":
+		convertErr = convertToEXR(x3fFile, config, logger)
 	case ".tiff", ".tif":
 		convertErr = convertToTIFF(x3fFile, config, logger)
 	case ".jpg", ".jpeg":
@@ -158,6 +161,21 @@ func convertToDNG(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) e
 	}
 
 	logger.Done("完成")
+	return nil
+}
+
+func convertToEXR(x3fFile *x3f.File, config output.Config, logger *x3f.Logger) error {
+	commonData, err := output.ProcessLinearACEScg(x3fFile, config, logger)
+	if err != nil {
+		return err
+	}
+
+	logger.Step("写入 ACEScg EXR", config.Output)
+	if err := output.ExportACEScgEXR(commonData, config.Output); err != nil {
+		return err
+	}
+	logger.Done("完成")
+
 	return nil
 }
 

@@ -2,8 +2,18 @@ package x3f
 
 import (
 	"encoding/binary"
+	"math"
 	"testing"
 )
+
+func TestXYZD65ToACEScgMapsWhiteToNeutral(t *testing.T) {
+	got := GetXYZD65ToACEScg().Apply(D65WhitePoint)
+	for channel := 0; channel < 3; channel++ {
+		if math.Abs(got[channel]-1) > 1e-6 {
+			t.Fatalf("channel %d mismatch: got %.9f want 1", channel, got[channel])
+		}
+	}
+}
 
 func TestGetCameraModelPrefersCAMMODELProperty(t *testing.T) {
 	file := &File{

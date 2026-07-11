@@ -1,12 +1,44 @@
 package output
 
 import (
+	"bytes"
+	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/weaming/x3f-go/x3f"
 )
+
+func TestBuildOpenEXRHeaderDeclaresACEScg(t *testing.T) {
+	header := buildOpenEXRHeader(4, 3)
+	for _, attribute := range [][]byte{
+		[]byte("chromaticities\x00"),
+		[]byte("acesImageContainerFlag\x00"),
+		[]byte("scene-linear ACEScg (AP1)"),
+	} {
+		if !bytes.Contains(header, attribute) {
+			t.Fatalf("OpenEXR header is missing %q", attribute)
+		}
+	}
+}
+
+func TestFloat32PixelsToBytesPreservesHDRValues(t *testing.T) {
+	pixels := []float32{-0.25, 1, 2.5}
+	data := float32PixelsToBytes(pixels)
+
+	if len(data) != len(pixels)*4 {
+		t.Fatalf("byte length mismatch: got %d want %d", len(data), len(pixels)*4)
+	}
+
+	for i, want := range pixels {
+		got := math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
+		if got != want {
+			t.Fatalf("pixel %d mismatch: got %v want %v", i, got, want)
+		}
+	}
+}
 
 func TestCreateDNGFileCreatesParentDirectories(t *testing.T) {
 	outputPath := filepath.Join(t.TempDir(), "nested", "dir", "x.dng")

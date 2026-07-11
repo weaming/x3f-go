@@ -40,7 +40,7 @@ func writeSubIFD(file *os.File, x3fFile *x3f.File, imageData []byte,
 	levels x3f.ImageLevels, opcodeList2Data []byte) (uint32, error) {
 
 	subIFDOffset := recordSubIFDOffset(file)
-	strips := calculateStripInfo(targetWidth, targetHeight)
+	strips := calculateStripInfo(targetWidth, targetHeight, 2)
 
 	subIFD := createSubIFD(file)
 	addBasicTags(subIFD, targetWidth, targetHeight, strips)
@@ -64,10 +64,10 @@ func recordSubIFDOffset(file *os.File) uint32 {
 }
 
 // 计算条带信息
-func calculateStripInfo(targetWidth, targetHeight uint32) stripInfo {
+func calculateStripInfo(targetWidth, targetHeight, bytesPerSample uint32) stripInfo {
 	rowsPerStrip := uint32(32)
 	numStrips := (targetHeight + rowsPerStrip - 1) / rowsPerStrip
-	bytesPerRow := targetWidth * 3 * 2
+	bytesPerRow := targetWidth * 3 * bytesPerSample
 
 	stripByteCounts := make([]uint32, numStrips)
 	for i := uint32(0); i < numStrips; i++ {

@@ -7,9 +7,9 @@ import (
 	"github.com/weaming/x3f-go/x3f"
 )
 
-// ExportRawPPM 导出未处理的 RAW 数据为 PPM 格式（用于调试）
-// noCrop=true 时输出完整未裁剪的数据
-// 对于 Quattro 格式，会执行 expand（匹配 C 版本 -unprocessed 行为），但不做预处理
+// ExportRawPPM 导出未处理的 RAW 数据为 PPM 格式（用于调试）。
+// noCrop=true 时输出完整未裁剪的数据。
+// 当前实现直接输出解码后的原始数据，不做 expand，也不做预处理。
 func ExportRawPPM(imageSection *x3f.ImageSection, file *x3f.File, outputPath string, noCrop bool) error {
 	// 解码图像（如果还没解码）
 	if imageSection.DecodedData == nil {

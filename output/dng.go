@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"unsafe"
 
 	"github.com/weaming/x3f-go/x3f"
 )
@@ -87,13 +86,9 @@ type CameraProfile struct {
 	UseSRGBMatrix bool         // true 使用 sRGB 标准矩阵，false 使用相机特定矩阵
 }
 
-// 预定义的 Camera Profiles（匹配 C 版本）
+// 预定义的 Camera Profiles。
+// 当前 DNG 主图是 baked linear sRGB，不再复用 C 版本的 BMT/intermediate profile 语义。
 var DefaultCameraProfiles = []CameraProfile{
-	{"Default", nil, false}, // 使用相机 CAMF ColorCorrections
-	{"Grayscale", &x3f.Vector3{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}, false},
-	{"Grayscale (red filter)", &x3f.Vector3{2.0, -1.0, 0.0}, false},
-	{"Grayscale (blue filter)", &x3f.Vector3{0.0, -1.0, 2.0}, false},
-	{"Unconverted", nil, true}, // 使用 sRGB 标准矩阵
 	{"Linear sRGB", nil, true},
 }
 
@@ -314,105 +309,6 @@ func floatToRational(value float64, maxDenom int64) (num int64, denom int64) {
 	return sign * n1, d1
 }
 
-// 构建 Opcode List 2 数据（Spatial Gain Maps）
-func buildOpcodeList2(spatialGains []x3f.SpatialGainCorr, activeArea []uint32, imageRows, imageCols uint32) []byte {
-	if len(spatialGains) == 0 || len(activeArea) != 4 {
-		return nil
-	}
-
-	// 计算变换参数（Spatial Gain 相对于整个图像，但 OpcodeList2 应用于裁剪后的 ActiveArea）
-	originV := -float64(activeArea[0]) / float64(activeArea[2]-activeArea[0])
-	originH := -float64(activeArea[1]) / float64(activeArea[3]-activeArea[1])
-	scaleV := float64(imageRows) / float64(activeArea[2]-activeArea[0])
-	scaleH := float64(imageCols) / float64(activeArea[3]-activeArea[1])
-
-	// 计算总大小
-	totalSize := 4 // OpcodeList header (count)
-	for _, sg := range spatialGains {
-		opcodeSize := 16 + // Opcode header (id, ver, flags, parsize)
-			16 + // Top, Left, Bottom, Right (4 × uint32)
-			12 + // Plane, Planes, RowPitch (3 × uint32)
-			4 + // ColPitch (uint32)
-			8 + // MapPointsV, MapPointsH (2 × uint32)
-			16 + // MapSpacingV, MapSpacingH (2 × float64)
-			16 + // MapOriginV, MapOriginH (2 × float64)
-			4 + // MapPlanes (uint32)
-			len(sg.Gain)*4 // Gain data (float32)
-		totalSize += opcodeSize
-	}
-
-	// 分配缓冲区
-	buf := make([]byte, totalSize)
-	offset := 0
-
-	// 写入 OpcodeList header
-	binary.BigEndian.PutUint32(buf[offset:], uint32(len(spatialGains)))
-	offset += 4
-
-	// 写入每个 GainMap opcode
-	for _, sg := range spatialGains {
-		opcodeParamSize := uint32(76 + len(sg.Gain)*4) // 参数大小（不包括 opcode header）
-
-		// Opcode header
-		binary.BigEndian.PutUint32(buf[offset:], OpcodeGainMapID)        // ID = 9
-		binary.BigEndian.PutUint32(buf[offset+4:], OpcodeGainMapVersion) // Version = 1.3.0.0
-		binary.BigEndian.PutUint32(buf[offset+8:], 0)                    // Flags = 0
-		binary.BigEndian.PutUint32(buf[offset+12:], opcodeParamSize)     // ParamSize
-		offset += 16
-
-		// GainMap 参数
-		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.RowOff))              // Top
-		binary.BigEndian.PutUint32(buf[offset+4:], uint32(sg.ColOff))            // Left
-		binary.BigEndian.PutUint32(buf[offset+8:], activeArea[2]-activeArea[0])  // Bottom (active height)
-		binary.BigEndian.PutUint32(buf[offset+12:], activeArea[3]-activeArea[1]) // Right (active width)
-		offset += 16
-
-		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.Chan))       // Plane (0=R, 1=G, 2=B)
-		binary.BigEndian.PutUint32(buf[offset+4:], uint32(sg.Channels)) // Planes
-		binary.BigEndian.PutUint32(buf[offset+8:], uint32(sg.RowPitch)) // RowPitch
-		binary.BigEndian.PutUint32(buf[offset+12:], uint32(sg.ColPitch))
-		offset += 16
-
-		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.Rows))   // MapPointsV
-		binary.BigEndian.PutUint32(buf[offset+4:], uint32(sg.Cols)) // MapPointsH
-		offset += 8
-
-		// MapSpacing (使用 float64, Big Endian)
-		// MapSpacing 表示每个 map 点之间的间距，所以需要除以 (points-1)
-		mapSpacingV := scaleV / float64(sg.Rows-1)
-		mapSpacingH := scaleH / float64(sg.Cols-1)
-		binary.BigEndian.PutUint64(buf[offset:], floatToBits64(mapSpacingV))
-		binary.BigEndian.PutUint64(buf[offset+8:], floatToBits64(mapSpacingH))
-		offset += 16
-
-		// MapOrigin
-		binary.BigEndian.PutUint64(buf[offset:], floatToBits64(originV))
-		binary.BigEndian.PutUint64(buf[offset+8:], floatToBits64(originH))
-		offset += 16
-
-		binary.BigEndian.PutUint32(buf[offset:], uint32(sg.Channels)) // MapPlanes
-		offset += 4
-
-		// Gain data (float32, Big Endian)
-		for _, g := range sg.Gain {
-			binary.BigEndian.PutUint32(buf[offset:], floatToBits32(g))
-			offset += 4
-		}
-	}
-
-	return buf
-}
-
-// 将 float32 转换为 bits 表示
-func floatToBits32(f float32) uint32 {
-	return *(*uint32)(unsafe.Pointer(&f))
-}
-
-// 将 float64 转换为 bits 表示
-func floatToBits64(f float64) uint64 {
-	return *(*uint64)(unsafe.Pointer(&f))
-}
-
 // imageDimensions 图像尺寸信息
 type imageDimensions struct {
 	decodedWidth  uint32
@@ -437,15 +333,16 @@ func ExportRawDNG(c *FinalData, x3fFile *x3f.File, filename string, cameraInfo x
 		Camera: cameraInfo,
 	}
 
-	imageLevels := stdLevels
-	spatialGainApplied := x3fFile.ShouldApplySpatialGain()
-	opcodeData := prepareSpatialGain(x3fFile, wb, c.Dims, spatialGainApplied)
-	previewData, previewW, previewH := generatePreviewImage(c.ImgData, c.Dims.targetWidth, c.Dims.targetHeight, 300)
+	imageLevels := x3f.ImageLevels{
+		Black: x3f.Vector3{0, 0, 0},
+		White: [3]uint32{65535, 65535, 65535},
+	}
+	previewData, previewW, previewH := generateLinearSRGBPreview(c.ImgData, c.Dims.targetWidth, c.Dims.targetHeight, 300)
 
 	writeTIFFHeader(file)
 	writeIFD0(file, x3fFile, wb, opts, c.Dims, previewW, previewH, imageLevels)
 	previewOffset := writePreviewData(file, previewData)
-	subIFDOffset := writeSubIFDData(file, x3fFile, c.ImgData, c.Dims, imageLevels, opcodeData)
+	subIFDOffset := writeSubIFDData(file, x3fFile, c.ImgData, c.Dims, imageLevels, nil)
 
 	return writeAndUpdateProfiles(file, x3fFile, wb, previewOffset, subIFDOffset)
 }
@@ -753,26 +650,6 @@ func preparePreprocessedImageData(preprocessedData []uint16, dims imageDimension
 	return imageData
 }
 
-// 准备 Spatial Gain 数据
-func prepareSpatialGain(x3fFile *x3f.File, wb string, dims imageDimensions, spatialGainApplied bool) []byte {
-	// 当前 DNG 输出已经在像素转换阶段烘焙 spatial gain，避免再写 OpcodeList2 重复校正。
-	if spatialGainApplied || !x3fFile.ShouldApplySpatialGain() {
-		return nil
-	}
-
-	spatialGains := x3fFile.GetSpatialGain(wb)
-	if len(spatialGains) == 0 {
-		return nil
-	}
-
-	x0, y0, x1, y1, ok := x3fFile.GetActiveImageArea()
-	if !ok {
-		return nil
-	}
-
-	return buildOpcodeList2(spatialGains, []uint32{y0, x0, y1 + 1, x1 + 1}, dims.targetHeight, dims.targetWidth)
-}
-
 // 写入 IFD0 标签
 func writeIFD0(file *os.File, x3fFile *x3f.File, wb string, opts DNGOptions, dims imageDimensions, previewW, previewH uint32, imageLevels x3f.ImageLevels) {
 	ifd0 := NewIFDWriter(file)
@@ -815,7 +692,6 @@ func addDNGVersionTags(ifd0 *IFDWriter) {
 
 // 添加色彩矩阵标签
 func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, opts DNGOptions, imageLevels x3f.ImageLevels) {
-	// Linear sRGB 模式: 使用标准 XYZ to sRGB 矩阵
 	xyzToSRGB := x3f.GetColorMatrix1()
 	ifd0.AddRationalArrayFromMatrix(TagColorMatrix1, xyzToSRGB, true)
 
@@ -832,14 +708,12 @@ func addColorMatrixTags(ifd0 *IFDWriter, x3fFile *x3f.File, opts DNGOptions, ima
 
 // 添加 Profile 相关标签
 func addProfileTags(ifd0 *IFDWriter, x3fFile *x3f.File, wb string, opts DNGOptions) {
-	// Linear sRGB 模式: 使用 Linear sRGB profile
 	ifd0.AddASCII(TagImageDescription, "Preprocessed linear sRGB with white balance applied", 128)
 
 	profileName := "Linear sRGB"
 	ifd0.AddASCII(TagAsShotProfileName, profileName, 32)
 	ifd0.AddASCII(TagProfileName, profileName, 32)
 
-	// ForwardMatrix: sRGB to XYZ
 	forwardMatrix := x3f.GetForwardMatrixWithSRGB()
 	ifd0.AddRationalArrayFromMatrix(TagForwardMatrix1, forwardMatrix, true)
 

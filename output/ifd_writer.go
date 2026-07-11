@@ -45,7 +45,7 @@ func byteSizeForType(typ uint16) int {
 		return 1
 	case TypeShort:
 		return 2
-	case TypeLong, TypeSRational, TypeRational:
+	case TypeLong, TypeFloat, TypeSRational, TypeRational:
 		return 4
 	default:
 		return 4
@@ -62,7 +62,7 @@ func (e *TagEntry) putData(p []byte) {
 		case TypeShort:
 			binary.LittleEndian.PutUint16(p, uint16(d))
 			p = p[2:]
-		case TypeLong, TypeRational, TypeSRational:
+		case TypeLong, TypeFloat, TypeRational, TypeSRational:
 			binary.LittleEndian.PutUint32(p, d)
 			p = p[4:]
 		}

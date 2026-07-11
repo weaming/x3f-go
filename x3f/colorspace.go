@@ -64,6 +64,39 @@ var BradfordD50ToD65 = Matrix3x3{
 	0.0122982, -0.0204830, 1.3299098,
 }
 
+// ACEScg 使用 AP1 原色和 ACES 白点（约 D60）。
+var ACESWhitePoint = Vector3{0.9526460746, 1.0, 1.0088251844}
+
+var XYZD60ToACEScg = Matrix3x3{
+	1.6410233797, -0.3248032942, -0.2364246952,
+	-0.6636628587, 1.6153315917, 0.0167563477,
+	0.0117218943, -0.0082844420, 0.9883948585,
+}
+
+// GetBradfordAdaptation 返回两个 XYZ 白点之间的 Bradford 色适应矩阵。
+func GetBradfordAdaptation(sourceWhite, targetWhite Vector3) Matrix3x3 {
+	bradford := Matrix3x3{
+		0.8951, 0.2664, -0.1614,
+		-0.7502, 1.7135, 0.0367,
+		0.0389, -0.0685, 1.0296,
+	}
+	bradfordInverse, _ := bradford.Inverse()
+	sourceLMS := bradford.Apply(sourceWhite)
+	targetLMS := bradford.Apply(targetWhite)
+
+	return bradfordInverse.Multiply(Diagonal3x3(Vector3{
+		targetLMS[0] / sourceLMS[0],
+		targetLMS[1] / sourceLMS[1],
+		targetLMS[2] / sourceLMS[2],
+	})).Multiply(bradford)
+}
+
+// GetXYZD65ToACEScg 返回 XYZ(D65) 到场景线性 ACEScg 的矩阵。
+func GetXYZD65ToACEScg() Matrix3x3 {
+	d65ToACESWhite := GetBradfordAdaptation(D65WhitePoint, ACESWhitePoint)
+	return XYZD60ToACEScg.Multiply(d65ToACESWhite)
+}
+
 // ColorSpace 色彩空间类型
 type ColorSpace int
 
